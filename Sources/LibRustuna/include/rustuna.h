@@ -26,6 +26,8 @@ RustunaSampler* rustuna_sampler_random_new(uint64_t seed, bool has_seed);
 int32_t rustuna_sampler_nsgaii_new(size_t population_size, double mutation_prob, double crossover_prob,
                                    double swapping_prob, uint64_t seed, RustunaSampler** out_sampler);
 RustunaSampler* rustuna_sampler_qmc_new(uint64_t seed, bool has_seed);
+int32_t rustuna_sampler_grid_new(const char* search_space_json, uint64_t seed, bool has_seed,
+                                 RustunaSampler** out_sampler);
 void rustuna_sampler_free(RustunaSampler* sampler);
 
 // Study APIs

@@ -94,3 +94,56 @@ public struct QMCSampler: Sampler {
         rustuna_sampler_qmc_new(seed ?? 0, seed != nil)
     }
 }
+
+/// Exhaustive grid search sampler over a discrete or categorical parameter grid.
+///
+/// Precomputes the Cartesian product of all provided parameter domains and evaluates each
+/// combination without replacement. When an optional seed is provided, the evaluation order
+/// of the grid points is shuffled deterministically.
+public struct GridSampler: Sampler {
+    public struct ValueList: ExpressibleByArrayLiteral, Sendable {
+        public let values: [Double]
+
+        public init(arrayLiteral elements: Double...) {
+            self.values = elements
+        }
+
+        public init(_ elements: [Double]) {
+            self.values = elements
+        }
+
+        public init(_ elements: [Int]) {
+            self.values = elements.map(Double.init)
+        }
+
+        public init(categorical: [String]) {
+            self.values = (0..<categorical.count).map(Double.init)
+        }
+    }
+
+    public let searchSpace: [String: [Double]]
+    public let seed: UInt64?
+
+    public init(searchSpace: [String: ValueList], seed: UInt64? = nil) {
+        self.searchSpace = searchSpace.mapValues { $0.values }
+        self.seed = seed
+    }
+
+    public init(searchSpace: [String: [Double]], seed: UInt64? = nil) {
+        self.searchSpace = searchSpace
+        self.seed = seed
+    }
+
+    public func makeRawHandle() -> OpaquePointer? {
+        guard let data = try? JSONSerialization.data(withJSONObject: searchSpace, options: []),
+              let jsonStr = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return jsonStr.withCString { cStr in
+            var raw: OpaquePointer? = nil
+            let code = rustuna_sampler_grid_new(cStr, seed ?? 0, seed != nil, &raw)
+            return code == 0 ? raw : nil
+        }
+    }
+}

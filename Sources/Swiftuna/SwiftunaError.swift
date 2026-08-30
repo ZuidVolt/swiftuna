@@ -29,6 +29,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     case noTrialsFound
     case handleExpired(String)
     case trialPruned(reason: String? = nil)
+    case searchSpaceExhausted(String)
 
     public static func from(code: Int32, message: String) -> Self {
         switch code {
@@ -53,6 +54,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
         case 17: return .invalidFixedParam(message)
         case 18: return .missingDependency(message)
         case 19: return .unexpected(message)
+        case 21: return .searchSpaceExhausted(message)
         default: return .unexpected("Code \(code): \(message)")
         }
     }
@@ -92,6 +94,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
         case .noTrialsFound: "No trials found in study"
         case .handleExpired(let m): "Handle expired or invalid: \(m)"
         case .trialPruned(let r): "Trial pruned: \(r ?? "No reason given")"
+        case .searchSpaceExhausted(let m): "Search space exhausted: \(m)"
         }
     }
 }

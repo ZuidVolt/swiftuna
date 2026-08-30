@@ -118,13 +118,36 @@ public final class Study: @unchecked Sendable {
     }
 
     public func optimize(
-        nTrials: Int,
+        nTrials: Int? = nil,
+        timeout: Duration? = nil,
         objective: (inout Trial) throws(SwiftunaError) -> [Double]
     ) throws(SwiftunaError) {
+        guard nTrials != nil || timeout != nil else {
+            throw SwiftunaError.invalidArgument("Either nTrials or timeout must be specified in optimize")
+        }
+
         let clock = ContinuousClock()
-        for _ in 0..<nTrials {
-            var trial = try ask()
-            let trialNum = trial.number
+        let deadline = timeout.map { clock.now + $0 }
+        var iteration = 0
+
+        while true {
+            if let nTrials, iteration >= nTrials {
+                break
+            }
+            if let deadline, clock.now >= deadline {
+                break
+            }
+
+            let trial: Trial
+            do {
+                trial = try ask()
+            } catch SwiftunaError.searchSpaceExhausted {
+                break
+            }
+
+            iteration += 1
+            var activeTrial = trial
+            let trialNum = activeTrial.number
             let startTime = clock.now
             let span = SwiftunaTelemetry.shared.tracer.startSpan(
                 name: "swiftuna.trial",
@@ -133,7 +156,7 @@ public final class Study: @unchecked Sendable {
 
             let evalResult: Result<[Double], SwiftunaError>
             do {
-                let vals = try objective(&trial)
+                let vals = try objective(&activeTrial)
                 evalResult = .success(vals)
             } catch {
                 evalResult = .failure(error)
@@ -146,17 +169,17 @@ public final class Study: @unchecked Sendable {
                 span.setAttribute(
                     "trial.duration_ms", value: String(format: "%.2f", Double(elapsed.components.attoseconds) / 1e15))
                 span.end(status: .ok)
-                try tell(consuming: trial, values: vals, state: .complete)
+                try tell(consuming: activeTrial, values: vals, state: .complete)
             case .failure(let err):
                 switch err {
                 case .trialPruned:
                     span.setAttribute("trial.status", value: "pruned")
                     span.end(status: .ok)
-                    try tell(consuming: trial, values: [], state: .pruned)
+                    try tell(consuming: activeTrial, values: [], state: .pruned)
                 default:
                     span.setAttribute("trial.status", value: "failed")
                     span.end(status: .error(err.description))
-                    try tell(consuming: trial, values: [], state: .fail)
+                    try tell(consuming: activeTrial, values: [], state: .fail)
                     throw err
                 }
             }
@@ -164,55 +187,70 @@ public final class Study: @unchecked Sendable {
     }
 
     public func optimize(
-        nTrials: Int,
+        nTrials: Int? = nil,
+        timeout: Duration? = nil,
         objective: (inout Trial) throws(SwiftunaError) -> Double
     ) throws(SwiftunaError) {
-        try optimize(nTrials: nTrials) { (trial: inout Trial) throws(SwiftunaError) -> [Double] in
+        try optimize(nTrials: nTrials, timeout: timeout) { (trial: inout Trial) throws(SwiftunaError) -> [Double] in
             [try objective(&trial)]
         }
     }
 
     public func optimize(
-        nTrials: Int,
+        nTrials: Int? = nil,
+        timeout: Duration? = nil,
         concurrency: Int? = nil,
-        objective: @Sendable @escaping (inout Trial) async throws(SwiftunaError) -> Double
-    ) async throws(SwiftunaError) {
+        objective: @Sendable @escaping (inout Trial) async throws -> Double
+    ) async throws {
+        guard nTrials != nil || timeout != nil else {
+            throw SwiftunaError.invalidArgument("Either nTrials or timeout must be specified in optimize")
+        }
+
+        let clock = ContinuousClock()
+        let deadline = timeout.map { clock.now + $0 }
         let maxConcurrent = max(1, concurrency ?? ProcessInfo.processInfo.activeProcessorCount)
+        let initialLimit = nTrials != nil ? min(maxConcurrent, nTrials!) : maxConcurrent
+
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 var submitted = 0
 
                 func spawnNextWorker() {
-                    guard submitted < nTrials else { return }
+                    if let nTrials, submitted >= nTrials { return }
+                    if let deadline, clock.now >= deadline { return }
+
                     submitted += 1
                     group.addTask {
-                        var trial = try self.ask()
-                        let evalResult: Result<Double, SwiftunaError>
+                        let trial: Trial
                         do {
-                            let val = try await objective(&trial)
+                            trial = try self.ask()
+                        } catch SwiftunaError.searchSpaceExhausted {
+                            return
+                        }
+                        var activeTrial = trial
+                        let evalResult: Result<Double, any Error>
+                        do {
+                            let val = try await objective(&activeTrial)
                             evalResult = .success(val)
-                        } catch let err as SwiftunaError {
-                            evalResult = .failure(err)
                         } catch {
-                            evalResult = .failure(.unexpected("\(error)"))
+                            evalResult = .failure(error)
                         }
 
                         switch evalResult {
                         case .success(let val):
-                            try self.tell(consuming: trial, value: val, state: .complete)
+                            try self.tell(consuming: activeTrial, value: val, state: .complete)
                         case .failure(let err):
-                            switch err {
-                            case .trialPruned:
-                                try self.tell(consuming: trial, values: [], state: .pruned)
-                            default:
-                                try self.tell(consuming: trial, values: [], state: .fail)
+                            if case SwiftunaError.trialPruned = err {
+                                try self.tell(consuming: activeTrial, values: [], state: .pruned)
+                            } else {
+                                try self.tell(consuming: activeTrial, values: [], state: .fail)
                                 throw err
                             }
                         }
                     }
                 }
 
-                for _ in 0..<min(maxConcurrent, nTrials) {
+                for _ in 0..<initialLimit {
                     spawnNextWorker()
                 }
 
@@ -228,11 +266,12 @@ public final class Study: @unchecked Sendable {
     }
 
     public func optimize<E: Error>(
-        nTrials: Int,
+        nTrials: Int? = nil,
+        timeout: Duration? = nil,
         objective: (inout Trial) throws(E) -> Double
     ) throws {
         var caughtError: E?
-        try optimize(nTrials: nTrials) { (trial: inout Trial) throws(SwiftunaError) -> Double in
+        try optimize(nTrials: nTrials, timeout: timeout) { (trial: inout Trial) throws(SwiftunaError) -> Double in
             do {
                 return try objective(&trial)
             } catch let err as SwiftunaError {

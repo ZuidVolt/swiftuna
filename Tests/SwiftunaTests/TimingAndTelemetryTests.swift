@@ -2,67 +2,58 @@ import Foundation
 import Testing
 @testable import Swiftuna
 
-final class MockSpan: TelemetrySpan, @unchecked Sendable {
+import Synchronization
+
+final class MockSpan: TelemetrySpan, Sendable {
     let name: String
-    private let lock = NSLock()
-    private var _attributes: [String: String]
-    private var _isEnded: Bool = false
-    private var _status: SpanStatus?
+    private struct State: Sendable {
+        var attributes: [String: String]
+        var isEnded: Bool = false
+        var status: SpanStatus?
+    }
+    private let state: Mutex<State>
 
     var attributes: [String: String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _attributes
+        state.withLock { $0.attributes }
     }
 
     var isEnded: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _isEnded
+        state.withLock { $0.isEnded }
     }
 
     var status: SpanStatus? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _status
+        state.withLock { $0.status }
     }
 
     init(name: String, attributes: [String: String]) {
         self.name = name
-        self._attributes = attributes
+        self.state = Mutex(State(attributes: attributes))
     }
 
     func setAttribute(_ key: String, value: String) {
-        lock.lock()
-        _attributes[key] = value
-        lock.unlock()
+        state.withLock { $0.attributes[key] = value }
     }
 
     func recordEvent(name: String, attributes: [String: String]) {}
 
     func end(status: SpanStatus) {
-        lock.lock()
-        _isEnded = true
-        _status = status
-        lock.unlock()
+        state.withLock {
+            $0.isEnded = true
+            $0.status = status
+        }
     }
 }
 
-final class MockTracer: TelemetryTracer, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _spans: [MockSpan] = []
+final class MockTracer: TelemetryTracer, Sendable {
+    private let _spans = Mutex<[MockSpan]>([])
 
     var spans: [MockSpan] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _spans
+        _spans.withLock { $0 }
     }
 
     func startSpan(name: String, attributes: [String: String]) -> any TelemetrySpan {
         let span = MockSpan(name: name, attributes: attributes)
-        lock.lock()
-        _spans.append(span)
-        lock.unlock()
+        _spans.withLock { $0.append(span) }
         return span
     }
 }

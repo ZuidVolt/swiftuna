@@ -20,6 +20,10 @@ use rustuna_storage::journal::file::JournalFileBackend;
 use rustuna_storage::journal::storage::JournalStorage;
 use rustuna_storage::sqlite3::SQLite3Storage;
 
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+
 fn error_kind_to_code(kind: &rustuna_core::ErrorKind) -> i32 {
     match kind {
         rustuna_core::ErrorKind::ObjectiveError => 1,
@@ -57,7 +61,11 @@ fn set_last_error(code: i32, msg: String) {
 }
 
 fn set_rustuna_error(err: &rustuna_core::Error) -> i32 {
-    let code = error_kind_to_code(&err.kind);
+    let code = if err.reason.contains("exhausted") {
+        21
+    } else {
+        error_kind_to_code(&err.kind)
+    };
     let msg = if err.reason.is_empty() {
         format!("{:?}", err.kind)
     } else {
@@ -204,6 +212,166 @@ pub extern "C" fn rustuna_sampler_qmc_new(seed: u64, has_seed: bool) -> *mut Rus
         Err(e) => {
             set_last_error(-99, format!("Panic creating QMC sampler: {e:?}"));
             std::ptr::null_mut()
+        }
+    }
+}
+
+pub struct GridSampler {
+    param_names: Vec<String>,
+    combinations: Vec<HashMap<String, f64>>,
+}
+
+impl GridSampler {
+    pub fn new(search_space: HashMap<String, Vec<f64>>, seed: Option<u64>) -> Self {
+        let mut param_names: Vec<String> = search_space.keys().cloned().collect();
+        param_names.sort();
+
+        let mut combinations = vec![HashMap::new()];
+        for name in &param_names {
+            if let Some(values) = search_space.get(name) {
+                if values.is_empty() {
+                    continue;
+                }
+                let mut next_combinations = Vec::with_capacity(combinations.len() * values.len());
+                for combo in &combinations {
+                    for val in values {
+                        let mut new_combo = combo.clone();
+                        new_combo.insert(name.clone(), *val);
+                        next_combinations.push(new_combo);
+                    }
+                }
+                combinations = next_combinations;
+            }
+        }
+
+        if let Some(s) = seed {
+            let mut rng = StdRng::seed_from_u64(s);
+            combinations.shuffle(&mut rng);
+        }
+
+        GridSampler {
+            param_names,
+            combinations,
+        }
+    }
+}
+
+impl Sampler for GridSampler {
+    fn sample_independent(
+        &self,
+        _ctx: &rustuna_core::sampler::Context,
+        _storage: Arc<RwLock<dyn Storage>>,
+        name: &str,
+        distribution: &Distribution,
+    ) -> rustuna_core::Result<f64> {
+        if let Some(first) = self.combinations.first() {
+            if let Some(&val) = first.get(name) {
+                return Ok(val);
+            }
+        }
+        match distribution {
+            Distribution::Float { low, .. } => Ok(*low),
+            Distribution::Int { low, .. } => Ok(*low as f64),
+            Distribution::Categorical { .. } => Ok(0.0),
+        }
+    }
+
+    fn support_joint_sampling(&self) -> bool {
+        true
+    }
+
+    fn sample_joint(
+        &self,
+        ctx: &rustuna_core::sampler::Context,
+        storage: Arc<RwLock<dyn Storage>>,
+        search_space: &HashMap<String, Distribution>,
+    ) -> rustuna_core::Result<HashMap<String, f64>> {
+        let mut storage_guard = storage.write().map_err(|e| {
+            rustuna_core::Error::with_reason(
+                rustuna_core::ErrorKind::StorageError,
+                format!("Storage lock poisoned: {e:?}"),
+            )
+        })?;
+
+        let trials = storage_guard.get_trials(ctx.study_id)?;
+
+        for candidate in &self.combinations {
+            let already_evaluated = trials.iter().flatten().any(|trial| {
+                if trial.state_values.state() == rustuna_core::trial::TrialState::Fail {
+                    return false;
+                }
+                self.param_names.iter().all(|name| {
+                    if let (Some(&c_val), Some(&t_val)) =
+                        (candidate.get(name), trial.internal_params.get(name))
+                    {
+                        (c_val - t_val).abs() < 1e-9
+                    } else {
+                        false
+                    }
+                })
+            });
+
+            if !already_evaluated {
+                let mut res = HashMap::new();
+                for (k, v) in candidate {
+                    if search_space.contains_key(k) {
+                        res.insert(k.clone(), *v);
+                    }
+                }
+                return Ok(res);
+            }
+        }
+
+        Err(rustuna_core::Error::with_reason(
+            rustuna_core::ErrorKind::SamplerError,
+            "All grid search space combinations have been exhausted".to_string(),
+        ))
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_sampler_grid_new(
+    search_space_json: *const c_char,
+    seed: u64,
+    has_seed: bool,
+    out_sampler: *mut *mut RustunaSampler,
+) -> i32 {
+    if search_space_json.is_null() || out_sampler.is_null() {
+        set_last_error(-1, "search_space_json or out_sampler pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let json_str = match unsafe { CStr::from_ptr(search_space_json) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(19, format!("Invalid UTF-8: {e:?}"));
+                return 19;
+            }
+        };
+
+        let search_space: HashMap<String, Vec<f64>> = match serde_json::from_str(json_str) {
+            Ok(ss) => ss,
+            Err(e) => {
+                set_last_error(19, format!("JSON deserialize error: {e:?}"));
+                return 19;
+            }
+        };
+
+        let s_opt = if has_seed { Some(seed) } else { None };
+        let sampler = GridSampler::new(search_space, s_opt);
+        let boxed = Box::new(RustunaSampler {
+            inner: Arc::new(sampler),
+        });
+        unsafe {
+            *out_sampler = Box::into_raw(boxed);
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_sampler_grid_new: {e:?}"));
+            -99
         }
     }
 }
@@ -606,7 +774,34 @@ pub extern "C" fn rustuna_study_ask(
                 }
                 0
             }
-            Err(e) => set_rustuna_error(&e),
+            Err(e) => {
+                if let Ok(mut guard) = s.inner.storage.write() {
+                    let last_running_trial_id = if let Ok(trials) = guard.get_trials(s.inner.id) {
+                        trials.last().and_then(|opt| {
+                            opt.as_ref().and_then(|t| {
+                                if t.state_values.state()
+                                    == rustuna_core::trial::TrialState::Running
+                                    && t.internal_params.is_empty()
+                                {
+                                    Some(t.id)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    } else {
+                        None
+                    };
+
+                    if let Some(id) = last_running_trial_id {
+                        let _ = guard.set_trial_state_values(
+                            id,
+                            rustuna_core::trial::TrialStateValues::Fail,
+                        );
+                    }
+                }
+                set_rustuna_error(&e)
+            }
         }
     }));
     match res {
