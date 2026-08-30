@@ -36,3 +36,42 @@ public struct RandomSampler: Sampler {
         }
     }
 }
+
+public struct NSGAIISampler: Sampler {
+    public let populationSize: Int
+    public let mutationProb: Double?
+    public let crossoverProb: Double
+    public let swappingProb: Double
+    public let seed: UInt64?
+
+    public init(
+        populationSize: Int = 50,
+        mutationProb: Double? = nil,
+        crossoverProb: Double = 0.9,
+        swappingProb: Double = 0.5,
+        seed: UInt64? = nil
+    ) {
+        self.populationSize = populationSize
+        self.mutationProb = mutationProb
+        self.crossoverProb = crossoverProb
+        self.swappingProb = swappingProb
+        self.seed = seed
+    }
+
+    public func makeRawHandle() -> OpaquePointer? {
+        var rawPtr: OpaquePointer?
+        let mutProbVal = mutationProb ?? -1.0
+        let status = rustuna_sampler_nsgaii_new(
+            populationSize,
+            mutProbVal,
+            crossoverProb,
+            swappingProb,
+            seed ?? 0,
+            &rawPtr
+        )
+        if status != 0 {
+            return nil
+        }
+        return rawPtr
+    }
+}

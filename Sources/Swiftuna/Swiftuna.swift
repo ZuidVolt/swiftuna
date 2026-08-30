@@ -1,9 +1,125 @@
 import Foundation
 internal import LibRustuna
 
+/// Creates a single-objective study with optional storage and custom sampler.
 public func createStudy<S: Sampler>(
     name: String = "default",
     direction: Direction = .minimize,
+    storage: StorageBackend = .inMemory,
+    sampler: S,
+    loadIfExists: Bool = false
+) throws(SwiftunaError) -> Study {
+    try createStudy(
+        name: name,
+        directions: [direction],
+        storage: storage,
+        sampler: sampler,
+        loadIfExists: loadIfExists
+    )
+}
+
+/// Creates a single-objective study with default TPESampler.
+public func createStudy(
+    name: String = "default",
+    direction: Direction = .minimize,
+    storage: StorageBackend = .inMemory,
+    loadIfExists: Bool = false
+) throws(SwiftunaError) -> Study {
+    try createStudy(
+        name: name,
+        direction: direction,
+        storage: storage,
+        sampler: TPESampler(),
+        loadIfExists: loadIfExists
+    )
+}
+
+/// Creates a multi-objective study with custom sampler.
+public func createStudy<S: Sampler>(
+    name: String = "default",
+    directions: [Direction],
+    storage: StorageBackend = .inMemory,
+    sampler: S,
+    loadIfExists: Bool = false
+) throws(SwiftunaError) -> Study {
+    let rawSampler = sampler.makeRawHandle()
+    defer {
+        if let rawSampler {
+            rustuna_sampler_free(rawSampler)
+        }
+    }
+
+    var studyPtr: OpaquePointer?
+    let dirInts: [Int32] = directions.map(\.rawValue)
+
+    let status = name.withCString { cName in
+        dirInts.withUnsafeBufferPointer { dirBuf in
+            let dirBasePtr = dirBuf.baseAddress
+            if let path = storage.pathString {
+                return path.withCString { cPath in
+                    rustuna_study_create_full(
+                        cName,
+                        dirBasePtr,
+                        directions.count,
+                        storage.rawStorageType,
+                        cPath,
+                        loadIfExists,
+                        rawSampler,
+                        &studyPtr
+                    )
+                }
+            } else {
+                return rustuna_study_create_full(
+                    cName,
+                    dirBasePtr,
+                    directions.count,
+                    storage.rawStorageType,
+                    nil,
+                    loadIfExists,
+                    rawSampler,
+                    &studyPtr
+                )
+            }
+        }
+    }
+
+    if status != 0 {
+        throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to create study '\(name)'")
+    }
+
+    return Study(raw: studyPtr, name: name, directions: directions)
+}
+
+/// Creates a multi-objective study with default NSGAIISampler (if directions.count > 1) or TPESampler.
+public func createStudy(
+    name: String = "default",
+    directions: [Direction],
+    storage: StorageBackend = .inMemory,
+    loadIfExists: Bool = false
+) throws(SwiftunaError) -> Study {
+    if directions.count > 1 {
+        return try createStudy(
+            name: name,
+            directions: directions,
+            storage: storage,
+            sampler: NSGAIISampler(),
+            loadIfExists: loadIfExists
+        )
+    } else {
+        return try createStudy(
+            name: name,
+            directions: directions,
+            storage: storage,
+            sampler: TPESampler(),
+            loadIfExists: loadIfExists
+        )
+    }
+}
+
+/// Loads an existing study from persistent storage.
+public func loadStudy<S: Sampler>(
+    name: String,
+    storage: StorageBackend,
     sampler: S
 ) throws(SwiftunaError) -> Study {
     let rawSampler = sampler.makeRawHandle()
@@ -14,25 +130,40 @@ public func createStudy<S: Sampler>(
     }
 
     var studyPtr: OpaquePointer?
-    let status = name.withCString { cName in
-        rustuna_study_new(
-            cName,
-            direction.rawValue,
-            rawSampler,
-            &studyPtr
-        )
+    let status: Int32 = name.withCString { cName in
+        if let path = storage.pathString {
+            return path.withCString { cPath in
+                rustuna_study_load(
+                    cName,
+                    storage.rawStorageType,
+                    cPath,
+                    rawSampler,
+                    &studyPtr
+                )
+            }
+        } else {
+            return rustuna_study_load(
+                cName,
+                storage.rawStorageType,
+                nil,
+                rawSampler,
+                &studyPtr
+            )
+        }
     }
 
     if status != 0 {
-        throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to create study '\(name)'")
+        throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to load study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, direction: direction)
+    return Study(raw: studyPtr, name: name, directions: [.minimize])
 }
 
-public func createStudy(
-    name: String = "default",
-    direction: Direction = .minimize
+/// Loads an existing study from persistent storage with default TPESampler.
+public func loadStudy(
+    name: String,
+    storage: StorageBackend
 ) throws(SwiftunaError) -> Study {
-    try createStudy(name: name, direction: direction, sampler: TPESampler())
+    try loadStudy(name: name, storage: storage, sampler: TPESampler())
 }
+

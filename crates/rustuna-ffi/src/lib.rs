@@ -9,10 +9,15 @@ use std::sync::{Arc, RwLock};
 
 use rustuna_core::distribution::Distribution;
 use rustuna_core::sampler::{RandomSampler, Sampler};
-use rustuna_core::storage::InMemoryStorage;
-use rustuna_core::study::{create_study_with_arc, get_best_trial, Direction, Study};
+use rustuna_core::storage::{InMemoryStorage, Storage};
+use rustuna_core::study::{create_study_with_arc, get_best_trial, get_pareto_front, Direction, Study};
 use rustuna_core::trial::{PersistedTrial, Trial, TrialStateValues};
+use rustuna_sampler::nsgaii::NSGAIISampler;
 use rustuna_sampler::tpe::TpeSampler;
+use rustuna_storage::cache::CachedStorage;
+use rustuna_storage::journal::file::JournalFileBackend;
+use rustuna_storage::journal::storage::JournalStorage;
+use rustuna_storage::sqlite3::SQLite3Storage;
 
 fn error_kind_to_code(kind: &rustuna_core::ErrorKind) -> i32 {
     match kind {
@@ -139,6 +144,48 @@ pub extern "C" fn rustuna_sampler_free(sampler: *mut RustunaSampler) {
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_sampler_nsgaii_new(
+    population_size: usize,
+    mutation_prob: f64,
+    crossover_prob: f64,
+    swapping_prob: f64,
+    seed: u64,
+    out_sampler: *mut *mut RustunaSampler,
+) -> i32 {
+    if out_sampler.is_null() {
+        set_last_error(-1, "out_sampler pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let pop_size = if population_size > 0 { population_size } else { 50 };
+        let mut_prob = if mutation_prob > 0.0 { Some(mutation_prob) } else { None };
+        let cross_prob = if crossover_prob > 0.0 { crossover_prob } else { 0.9 };
+        let swap_prob = if swapping_prob > 0.0 { swapping_prob } else { 0.5 };
+
+        let sampler = if seed != 0 {
+            NSGAIISampler::seed_from_u64(seed, pop_size, mut_prob, cross_prob, swap_prob)
+        } else {
+            NSGAIISampler::new(pop_size, mut_prob, cross_prob, swap_prob)
+        };
+
+        let boxed = Box::new(RustunaSampler {
+            inner: Arc::new(sampler),
+        });
+        unsafe {
+            *out_sampler = Box::into_raw(boxed);
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_sampler_nsgaii_new: {e:?}"));
+            -99
+        }
+    }
+}
+
 pub struct RustunaStudy {
     pub inner: Study,
 }
@@ -190,6 +237,181 @@ pub extern "C" fn rustuna_study_new(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_study_new: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_create_full(
+    name: *const c_char,
+    directions: *const i32,
+    directions_len: usize,
+    storage_type: i32, // 0 = InMemory, 1 = SQLite, 2 = Journal
+    storage_path: *const c_char,
+    load_if_exists: bool,
+    sampler: *mut RustunaSampler,
+    out_study: *mut *mut RustunaStudy,
+) -> i32 {
+    if out_study.is_null() {
+        set_last_error(-1, "out_study pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let study_name = if name.is_null() {
+            "default".to_string()
+        } else {
+            unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned()
+        };
+
+        let dirs: Vec<Direction> = if !directions.is_null() && directions_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(directions, directions_len) };
+            slice.iter().map(|&d| match d {
+                1 => Direction::Maximize,
+                _ => Direction::Minimize,
+            }).collect()
+        } else {
+            vec![Direction::Minimize]
+        };
+
+        let sampler_arc: Arc<dyn Sampler> = if !sampler.is_null() {
+            unsafe { (*sampler).inner.clone() }
+        } else if dirs.len() > 1 {
+            Arc::new(NSGAIISampler::default())
+        } else {
+            Arc::new(TpeSampler::new())
+        };
+
+        let storage_path_str = if !storage_path.is_null() {
+            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+        } else {
+            "".to_string()
+        };
+
+        let storage: Arc<RwLock<dyn Storage>> = match storage_type {
+            1 => {
+                let backend = match SQLite3Storage::new(&storage_path_str) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                if let Err(e) = backend.create_database() {
+                    return set_rustuna_error(&e);
+                }
+                Arc::new(RwLock::new(CachedStorage::new(Box::new(backend))))
+            }
+            2 => {
+                let file_backend = match JournalFileBackend::new(&storage_path_str, None) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                let backend = match JournalStorage::new(Box::new(file_backend)) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                Arc::new(RwLock::new(backend))
+            }
+            _ => Arc::new(RwLock::new(InMemoryStorage::new())),
+        };
+
+        match create_study_with_arc(&study_name, storage.clone(), sampler_arc.clone(), dirs) {
+            Ok(study) => {
+                let boxed = Box::new(RustunaStudy { inner: study });
+                unsafe {
+                    *out_study = Box::into_raw(boxed);
+                }
+                0
+            }
+            Err(e) if load_if_exists && matches!(e.kind, rustuna_core::ErrorKind::DuplicatedStudy) => {
+                match Study::from_name(study_name, storage, sampler_arc) {
+                    Ok(study) => {
+                        let boxed = Box::new(RustunaStudy { inner: study });
+                        unsafe {
+                            *out_study = Box::into_raw(boxed);
+                        }
+                        0
+                    }
+                    Err(e) => set_rustuna_error(&e),
+                }
+            }
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_create_full: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_load(
+    name: *const c_char,
+    storage_type: i32,
+    storage_path: *const c_char,
+    sampler: *mut RustunaSampler,
+    out_study: *mut *mut RustunaStudy,
+) -> i32 {
+    if name.is_null() || out_study.is_null() {
+        set_last_error(-1, "name or out_study pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let study_name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+
+        let storage_path_str = if !storage_path.is_null() {
+            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+        } else {
+            "".to_string()
+        };
+
+        let storage: Arc<RwLock<dyn Storage>> = match storage_type {
+            1 => {
+                let backend = match SQLite3Storage::new(&storage_path_str) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                if let Err(e) = backend.create_database() {
+                    return set_rustuna_error(&e);
+                }
+                Arc::new(RwLock::new(CachedStorage::new(Box::new(backend))))
+            }
+            2 => {
+                let file_backend = match JournalFileBackend::new(&storage_path_str, None) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                let backend = match JournalStorage::new(Box::new(file_backend)) {
+                    Ok(b) => b,
+                    Err(e) => return set_rustuna_error(&e),
+                };
+                Arc::new(RwLock::new(backend))
+            }
+            _ => Arc::new(RwLock::new(InMemoryStorage::new())),
+        };
+
+        let sampler_arc: Arc<dyn Sampler> = if !sampler.is_null() {
+            unsafe { (*sampler).inner.clone() }
+        } else {
+            Arc::new(TpeSampler::new())
+        };
+
+        match Study::from_name(study_name, storage, sampler_arc) {
+            Ok(study) => {
+                let boxed = Box::new(RustunaStudy { inner: study });
+                unsafe {
+                    *out_study = Box::into_raw(boxed);
+                }
+                0
+            }
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_load: {e:?}"));
             -99
         }
     }
@@ -481,6 +703,47 @@ pub extern "C" fn rustuna_study_tell(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_tell_multi(
+    study: *mut RustunaStudy,
+    trial_number: u32,
+    state: i32,
+    values: *const f64,
+    values_len: usize,
+) -> i32 {
+    if study.is_null() {
+        set_last_error(-1, "study pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *study };
+        let state_val = match state {
+            1 => {
+                if !values.is_null() && values_len > 0 {
+                    let slice = unsafe { std::slice::from_raw_parts(values, values_len) };
+                    TrialStateValues::Complete(slice.to_vec())
+                } else {
+                    TrialStateValues::Complete(vec![])
+                }
+            }
+            2 => TrialStateValues::Pruned,
+            4 => TrialStateValues::Fail,
+            _ => TrialStateValues::Complete(vec![]),
+        };
+        match s.inner.tell(trial_number, state_val) {
+            Ok(()) => 0,
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_tell_multi: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rustuna_trial_get_number(trial: *mut RustunaTrial) -> u32 {
     if trial.is_null() {
         return 0;
@@ -700,6 +963,62 @@ pub extern "C" fn rustuna_study_get_best_trial(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_get_best_trials(
+    study: *mut RustunaStudy,
+    out_trials: *mut *mut *mut RustunaPersistedTrial,
+    out_len: *mut usize,
+) -> i32 {
+    if study.is_null() || out_trials.is_null() || out_len.is_null() {
+        set_last_error(-1, "study, out_trials, or out_len pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *study };
+        let pareto_front_numbers = match get_pareto_front(&s.inner) {
+            Ok(p) => p,
+            Err(e) => return set_rustuna_error(&e),
+        };
+
+        let mut guard = match s.inner.storage.write() {
+            Ok(g) => g,
+            Err(e) => {
+                set_last_error(3, format!("Storage lock poisoned: {e:?}"));
+                return 3;
+            }
+        };
+        let trials_vec = match guard.get_trials(s.inner.id) {
+            Ok(v) => v,
+            Err(e) => return set_rustuna_error(&e),
+        };
+
+        let mut pt_ptrs: Vec<*mut RustunaPersistedTrial> = Vec::with_capacity(pareto_front_numbers.len());
+        for num in pareto_front_numbers {
+            if let Some(Some(trial)) = trials_vec.get(num as usize) {
+                pt_ptrs.push(Box::into_raw(Box::new(RustunaPersistedTrial { inner: trial.clone() })));
+            }
+        }
+
+        pt_ptrs.shrink_to_fit();
+        let len = pt_ptrs.len();
+        let ptr = pt_ptrs.as_mut_ptr();
+        std::mem::forget(pt_ptrs);
+
+        unsafe {
+            *out_trials = ptr;
+            *out_len = len;
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_get_best_trials: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rustuna_study_get_trials(
     study: *mut RustunaStudy,
     out_trials: *mut *mut *mut RustunaPersistedTrial,
@@ -808,6 +1127,47 @@ pub extern "C" fn rustuna_persisted_trial_get_value(
             }
         }
         _ => false,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_persisted_trial_get_values(
+    trial: *const RustunaPersistedTrial,
+    out_vals: *mut *mut f64,
+    out_len: *mut usize,
+) -> bool {
+    if trial.is_null() || out_vals.is_null() || out_len.is_null() {
+        return false;
+    }
+    match unsafe { &(*trial).inner.state_values } {
+        TrialStateValues::Complete(vals) => {
+            let mut cloned = vals.clone();
+            cloned.shrink_to_fit();
+            let len = cloned.len();
+            let ptr = cloned.as_mut_ptr();
+            std::mem::forget(cloned);
+            unsafe {
+                *out_vals = ptr;
+                *out_len = len;
+            }
+            true
+        }
+        _ => {
+            unsafe {
+                *out_vals = std::ptr::null_mut();
+                *out_len = 0;
+            }
+            false
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_values_buffer_free(vals: *mut f64, len: usize) {
+    if !vals.is_null() && len > 0 {
+        unsafe {
+            drop(Vec::from_raw_parts(vals, len, len));
+        }
     }
 }
 

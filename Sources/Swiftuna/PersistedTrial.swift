@@ -12,6 +12,7 @@ public struct PersistedTrial: Sendable {
     public let number: Int
     public let state: TrialState
     public let value: Double?
+    public let values: [Double]
     public let params: [String: Double]
     public let userAttrs: [String: String]
 
@@ -19,12 +20,14 @@ public struct PersistedTrial: Sendable {
         number: Int,
         state: TrialState,
         value: Double?,
+        values: [Double] = [],
         params: [String: Double],
         userAttrs: [String: String] = [:]
     ) {
         self.number = number
         self.state = state
         self.value = value
+        self.values = values.isEmpty ? (value.map { [$0] } ?? []) : values
         self.params = params
         self.userAttrs = userAttrs
     }

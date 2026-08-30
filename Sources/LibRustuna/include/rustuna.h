@@ -23,12 +23,37 @@ void rustuna_string_free(char* s);
 // Sampler APIs
 RustunaSampler* rustuna_sampler_tpe_new(uint64_t seed, bool has_seed);
 RustunaSampler* rustuna_sampler_random_new(uint64_t seed, bool has_seed);
+int32_t rustuna_sampler_nsgaii_new(
+    size_t population_size,
+    double mutation_prob,
+    double crossover_prob,
+    double swapping_prob,
+    uint64_t seed,
+    RustunaSampler** out_sampler
+);
 void rustuna_sampler_free(RustunaSampler* sampler);
 
 // Study APIs
 int32_t rustuna_study_new(
     const char* name,
     int32_t direction, // 0 = Minimize, 1 = Maximize
+    RustunaSampler* sampler,
+    RustunaStudy** out_study
+);
+int32_t rustuna_study_create_full(
+    const char* name,
+    const int32_t* directions,
+    size_t directions_len,
+    int32_t storage_type, // 0 = InMemory, 1 = SQLite, 2 = Journal
+    const char* storage_path,
+    bool load_if_exists,
+    RustunaSampler* sampler,
+    RustunaStudy** out_study
+);
+int32_t rustuna_study_load(
+    const char* name,
+    int32_t storage_type,
+    const char* storage_path,
     RustunaSampler* sampler,
     RustunaStudy** out_study
 );
@@ -54,8 +79,20 @@ int32_t rustuna_study_tell(
     int32_t state, // 0 = Running, 1 = Complete, 2 = Pruned, 3 = Waiting, 4 = Fail
     double value
 );
+int32_t rustuna_study_tell_multi(
+    RustunaStudy* study,
+    uint32_t trial_number,
+    int32_t state,
+    const double* values,
+    size_t values_len
+);
 
 int32_t rustuna_study_get_best_trial(RustunaStudy* study, RustunaPersistedTrial** out_trial);
+int32_t rustuna_study_get_best_trials(
+    RustunaStudy* study,
+    RustunaPersistedTrial*** out_trials,
+    size_t* out_len
+);
 int32_t rustuna_study_get_trials(
     RustunaStudy* study,
     RustunaPersistedTrial*** out_trials,
@@ -97,6 +134,12 @@ void rustuna_trial_free(RustunaTrial* trial);
 uint32_t rustuna_persisted_trial_get_number(const RustunaPersistedTrial* trial);
 int32_t rustuna_persisted_trial_get_state(const RustunaPersistedTrial* trial);
 bool rustuna_persisted_trial_get_value(const RustunaPersistedTrial* trial, double* out_val);
+bool rustuna_persisted_trial_get_values(
+    const RustunaPersistedTrial* trial,
+    double** out_vals,
+    size_t* out_len
+);
+void rustuna_values_buffer_free(double* vals, size_t len);
 int32_t rustuna_persisted_trial_get_params_json(const RustunaPersistedTrial* trial, char** out_json);
 int32_t rustuna_persisted_trial_get_user_attrs_json(const RustunaPersistedTrial* trial, char** out_json);
 void rustuna_persisted_trial_free(RustunaPersistedTrial* trial);
