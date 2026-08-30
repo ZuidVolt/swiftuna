@@ -80,7 +80,7 @@ public final class Study: @unchecked Sendable {
         let intermediateSteps = trial.intermediateSteps
         _ = trial.takeHandle()  // Release from trial deinit
 
-        var intermediateJsonStr: String? = nil
+        var intermediateJsonStr: String?
         if !intermediateSteps.isEmpty {
             let stepMap = Dictionary(uniqueKeysWithValues: intermediateSteps.map { (String($0.step), $0.value) })
             if let data = try? JSONEncoder().encode(stepMap) {
@@ -98,17 +98,16 @@ public final class Study: @unchecked Sendable {
                     0,
                     cIntermediate
                 )
-            } else {
-                return values.withUnsafeBufferPointer { buf in
-                    rustuna_study_tell_multi(
-                        raw,
-                        UInt32(trialNumber),
-                        state.rawValue,
-                        buf.baseAddress,
-                        values.count,
-                        cIntermediate
-                    )
-                }
+            }
+            return values.withUnsafeBufferPointer { buf in
+                rustuna_study_tell_multi(
+                    raw,
+                    UInt32(trialNumber),
+                    state.rawValue,
+                    buf.baseAddress,
+                    values.count,
+                    cIntermediate
+                )
             }
         }
 
@@ -150,7 +149,7 @@ public final class Study: @unchecked Sendable {
                 try tell(consuming: trial, values: vals, state: .complete)
             case .failure(let err):
                 switch err {
-                case .trialPruned(_):
+                case .trialPruned:
                     span.setAttribute("trial.status", value: "pruned")
                     span.end(status: .ok)
                     try tell(consuming: trial, values: [], state: .pruned)
@@ -203,7 +202,7 @@ public final class Study: @unchecked Sendable {
                             try self.tell(consuming: trial, value: val, state: .complete)
                         case .failure(let err):
                             switch err {
-                            case .trialPruned(_):
+                            case .trialPruned:
                                 try self.tell(consuming: trial, values: [], state: .pruned)
                             default:
                                 try self.tell(consuming: trial, values: [], state: .fail)
@@ -460,7 +459,7 @@ public final class Study: @unchecked Sendable {
         }
         // SQLite format "yyyy-MM-dd HH:mm:ss.SSSSSS" -> normalize to ISO8601 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ"
         var isoStr = str.replacingOccurrences(of: " ", with: "T")
-        if !isoStr.hasSuffix("Z") && !isoStr.contains("+") {
+        if !isoStr.hasSuffix("Z"), !isoStr.contains("+") {
             isoStr.append("Z")
         }
         return try? Date(isoStr, strategy: .iso8601)
@@ -595,9 +594,8 @@ public final class Study: @unchecked Sendable {
                 return userAttrsJson.withCString { cAttrs in
                     rustuna_study_enqueue_trial(raw, cParams, cAttrs)
                 }
-            } else {
-                return rustuna_study_enqueue_trial(raw, cParams, nil)
             }
+            return rustuna_study_enqueue_trial(raw, cParams, nil)
         }
 
         if status != 0 {
@@ -628,8 +626,7 @@ public final class Study: @unchecked Sendable {
         var paramsJsonStr: String?
         if let params {
             if let data = try? JSONEncoder().encode(params),
-                let str = String(data: data, encoding: .utf8)
-            {
+                let str = String(data: data, encoding: .utf8) {
                 paramsJsonStr = str
             }
         }
@@ -672,7 +669,7 @@ public final class Study: @unchecked Sendable {
         }
 
         // Fast upfront Swift validation
-        if trial.state == .complete && trial.values.count != directions.count {
+        if trial.state == .complete, trial.values.count != directions.count {
             throw SwiftunaError.invalidArgument(
                 "Trial has \(trial.values.count) objective values, expected \(directions.count) for study '\(name)'"
             )

@@ -45,8 +45,9 @@ public struct Trial: ~Copyable {
             throw SwiftunaError.handleExpired("Trial handle is expired or invalid")
         }
         guard !range.lowerBound.isNaN, !range.upperBound.isNaN,
-              range.lowerBound.isFinite, range.upperBound.isFinite,
-              range.lowerBound <= range.upperBound else {
+            range.lowerBound.isFinite, range.upperBound.isFinite,
+            range.lowerBound <= range.upperBound
+        else {
             throw SwiftunaError.invalidRange("Range bounds must be finite and lowerBound <= upperBound: \(range)")
         }
 
@@ -139,7 +140,8 @@ public struct Trial: ~Copyable {
         }
 
         if status != 0 {
-            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Categorical suggestion failed for '\(name)'")
+            throw SwiftunaError.fromLastError(
+                fallbackCode: status, context: "Categorical suggestion failed for '\(name)'")
         }
         return choices[chosenIdx]
     }
@@ -307,4 +309,3 @@ public struct Trial: ~Copyable {
         }
     }
 }
-

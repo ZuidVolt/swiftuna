@@ -15,9 +15,8 @@ public struct TPESampler: Sampler {
     public func makeRawHandle() -> OpaquePointer? {
         if let s = seed {
             return rustuna_sampler_tpe_new(s, true)
-        } else {
-            return rustuna_sampler_tpe_new(0, false)
         }
+        return rustuna_sampler_tpe_new(0, false)
     }
 }
 
@@ -31,9 +30,8 @@ public struct RandomSampler: Sampler {
     public func makeRawHandle() -> OpaquePointer? {
         if let s = seed {
             return rustuna_sampler_random_new(s, true)
-        } else {
-            return rustuna_sampler_random_new(0, false)
         }
+        return rustuna_sampler_random_new(0, false)
     }
 }
 

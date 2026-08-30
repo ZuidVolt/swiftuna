@@ -110,9 +110,8 @@ public struct PercentilePruner: Pruner {
 
         if study.direction == .minimize {
             return currentValue > threshold
-        } else {
-            return currentValue < threshold
         }
+        return currentValue < threshold
     }
 }
 

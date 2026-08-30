@@ -48,7 +48,7 @@ public final class SwiftunaTelemetry: Sendable {
         private let lock = OSAllocatedUnfairLock<(any TelemetryTracer)?>(initialState: nil)
     #else
         private final class Box: @unchecked Sendable {
-            var tracer: (any TelemetryTracer)? = nil
+            var tracer: (any TelemetryTracer)?
             let lock = NSLock()
         }
         private let box = Box()

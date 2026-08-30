@@ -12,12 +12,12 @@ public enum StorageBackend: Sendable, Equatable {
     case journal(path: String)
 
     /// Convenience initializer using a `Foundation.URL` for SQLite.
-    public static func sqlite(url: URL) -> StorageBackend {
+    public static func sqlite(url: URL) -> Self {
         .sqlite(path: url.path(percentEncoded: false))
     }
 
     /// Convenience initializer using a `Foundation.URL` for Journal.
-    public static func journal(url: URL) -> StorageBackend {
+    public static func journal(url: URL) -> Self {
         .journal(path: url.path(percentEncoded: false))
     }
 

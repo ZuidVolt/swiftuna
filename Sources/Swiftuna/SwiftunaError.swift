@@ -30,7 +30,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     case handleExpired(String)
     case trialPruned(reason: String? = nil)
 
-    public static func from(code: Int32, message: String) -> SwiftunaError {
+    public static func from(code: Int32, message: String) -> Self {
         switch code {
         case -1: return .invalidArgument(message)
         case -99: return .panic(message)
@@ -57,7 +57,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
         }
     }
 
-    internal static func fromLastError(fallbackCode: Int32 = -2, context: String) -> SwiftunaError {
+    internal static func fromLastError(fallbackCode: Int32 = -2, context: String) -> Self {
         let code = rustuna_last_error_code()
         let effectiveCode = code != 0 ? code : fallbackCode
         let msg = rustuna_last_error_message().map { String(cString: $0) } ?? context

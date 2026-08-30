@@ -31,7 +31,7 @@ func assertClose(_ a: Double, _ b: Double, tolerance: Double = 1e-7, label: Stri
 
 @main
 struct SwiftunaParityApp {
-    static func main() throws {
+    static func main() {
         print("=========================================================")
         print("             Swiftuna Parity Verification Suite           ")
         print("=========================================================")
@@ -90,7 +90,7 @@ struct SwiftunaParityApp {
                 let ceiling = m_w + 4.0 * s_w
                 let loss: Double
                 if ceiling > 5.0 {
-                    loss = 1000.0 + (ceiling - 5.0) * 100.0
+                    loss = 1_000.0 + (ceiling - 5.0) * 100.0
                 } else {
                     loss = pow(p_w - 1.0, 2) + pow(m_w - 1.5, 2) + pow(s_w - 0.5, 2)
                 }

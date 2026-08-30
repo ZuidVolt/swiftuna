@@ -44,9 +44,8 @@ internal func withOptionalCString<R>(
 ) rethrows -> R {
     if let string {
         return try string.withCString { try body($0) }
-    } else {
-        return try body(nil)
     }
+    return try body(nil)
 }
 
 /// Creates a multi-objective study with custom sampler and optional pruner.
@@ -109,16 +108,15 @@ public func createStudy(
             pruner: pruner,
             loadIfExists: loadIfExists
         )
-    } else {
-        return try createStudy(
-            name: name,
-            directions: directions,
-            storage: storage,
-            sampler: TPESampler(),
-            pruner: pruner,
-            loadIfExists: loadIfExists
-        )
     }
+    return try createStudy(
+        name: name,
+        directions: directions,
+        storage: storage,
+        sampler: TPESampler(),
+        pruner: pruner,
+        loadIfExists: loadIfExists
+    )
 }
 
 /// Loads an existing study from persistent storage with custom sampler and pruner.

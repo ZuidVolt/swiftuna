@@ -40,7 +40,7 @@ func formatRow(name: String, totalMs: Double, us: Double, tp: Double, rel: Doubl
 struct SwiftunaBenchApp {
     static func main() {
         do {
-            let nTrials = 1000
+            let nTrials = 1_000
             let cwd = FileManager.default.currentDirectoryPath
 
             print("=========================================================")
@@ -53,7 +53,7 @@ struct SwiftunaBenchApp {
             fflush(stdout)
 
             // 1. Run Rust Benchmark
-            var rustMetrics: BenchmarkMetrics? = nil
+            var rustMetrics: BenchmarkMetrics?
             let rustBin = cwd + "/crates/rustuna-ffi/target/release/rust_bench"
             if let out = runSubprocess(executable: rustBin, arguments: ["\(nTrials)"]) {
                 for line in out.split(separator: "\n") {
@@ -86,14 +86,14 @@ struct SwiftunaBenchApp {
 
             let swiftDuration = clock.now - swiftStart
             let swiftSec = Double(swiftDuration.components.seconds) + Double(swiftDuration.components.attoseconds) * 1e-18
-            let swiftMs = swiftSec * 1000.0
+            let swiftMs = swiftSec * 1_000.0
             let swiftUsPerTrial = (swiftSec * 1_000_000.0) / Double(nTrials)
             let swiftThroughput = Double(nTrials) / swiftSec
 
             let swiftMetrics = BenchmarkMetrics(language: "Swiftuna (Swift 6.4)", totalMs: swiftMs, usPerTrial: swiftUsPerTrial, throughput: swiftThroughput)
 
             // 3. Run Python Benchmark
-            var pythonMetrics: BenchmarkMetrics? = nil
+            var pythonMetrics: BenchmarkMetrics?
             let uvPath = "/opt/homebrew/bin/uv"
             let pyScript = cwd + "/tools/python_bench.py"
             if FileManager.default.fileExists(atPath: uvPath),
@@ -156,7 +156,7 @@ struct SwiftunaBenchApp {
                 }
 
                 let qStart = ContinuousClock.now
-                let qIters = 1000
+                let qIters = 1_000
                 var qTotal = 0
                 for _ in 0..<qIters {
                     let trials = try queryStudy.trials
@@ -164,8 +164,8 @@ struct SwiftunaBenchApp {
                 }
                 let qElapsed = ContinuousClock.now - qStart
                 let qMs = Double(qElapsed.components.attoseconds) / 1e15
-                let qUsPerTrial = (qMs * 1000.0) / Double(qTotal)
-                let qThroughput = Double(qTotal) / (qMs / 1000.0)
+                let qUsPerTrial = (qMs * 1_000.0) / Double(qTotal)
+                let qThroughput = Double(qTotal) / (qMs / 1_000.0)
 
                 print("Benchmark: 100 rich trials (params, attrs, constraints, steps) x 1,000 iterations")
                 print(String(format: "Total Time:       %.2f ms (100,000 trials loaded)", qMs))

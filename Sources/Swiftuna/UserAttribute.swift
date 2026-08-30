@@ -89,15 +89,17 @@ public struct CodableAttribute<T: Codable & Sendable>: AttributeConvertible {
 
     public static func fromAttributeString(_ raw: String) -> CodableAttribute<T>? {
         guard let data = raw.data(using: .utf8),
-              let val = try? JSONDecoder().decode(T.self, from: data) else {
+            let val = try? JSONDecoder().decode(T.self, from: data)
+        else {
             return nil
         }
-        return CodableAttribute(val)
+        return Self(val)
     }
 
     public func toAttributeString() -> String {
         guard let data = try? JSONEncoder().encode(value),
-              let str = String(data: data, encoding: .utf8) else {
+            let str = String(data: data, encoding: .utf8)
+        else {
             return "{}"
         }
         return str

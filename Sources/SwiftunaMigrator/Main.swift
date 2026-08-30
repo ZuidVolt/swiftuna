@@ -39,7 +39,7 @@ func findGit() -> String {
 
 @main
 struct SwiftunaMigratorApp {
-    static func main() throws {
+    static func main() {
         let git = findGit()
         let rustunaDir = "ref/rustuna"
 
