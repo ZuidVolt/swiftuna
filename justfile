@@ -50,8 +50,9 @@ docs-build: build-ffi
         generate-documentation --target Swiftuna --disable-indexing --transform-for-static-hosting --hosting-base-path swiftuna --output-path ./docs
 
 # Start a local web server to preview DocC documentation with live reload
-docs-preview: build-ffi
-    swift package --disable-sandbox preview-documentation --target Swiftuna --port 8088
+docs-preview port="8080": build-ffi
+    -kill -9 $$(lsof -ti :{{ port }}) 2>/dev/null || true
+    swift package --disable-sandbox preview-documentation --target Swiftuna --port {{ port }}
 
 # Serve the static ./docs build locally with /swiftuna route emulation
 docs-serve:
