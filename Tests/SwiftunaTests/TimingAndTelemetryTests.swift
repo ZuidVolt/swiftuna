@@ -35,7 +35,7 @@ final class MockTracer: TelemetryTracer, @unchecked Sendable {
     }
 }
 
-@Suite("Timing & Telemetry Analytics Tests")
+@Suite("Timing & Telemetry Analytics Tests", .serialized)
 struct TimingAndTelemetryTests {
 
     @Test("Trial timestamps and Swift 6 Duration are captured across optimization")
@@ -63,20 +63,22 @@ struct TimingAndTelemetryTests {
 
     @Test("Custom TelemetryTracer captures trial spans and metadata without external dependencies")
     func testTelemetryTracingIntegration() throws {
+        let studyName = "telemetry_study_\(UUID().uuidString)"
         let mockTracer = MockTracer()
         SwiftunaTelemetry.shared.registerTracer(mockTracer)
         defer { SwiftunaTelemetry.shared.registerTracer(nil) }
 
-        let study = try Swiftuna.createStudy(name: "telemetry_study")
+        let study = try Swiftuna.createStudy(name: studyName)
 
         try study.optimize(nTrials: 2) { trial in
             return 3.14
         }
 
-        #expect(mockTracer.spans.count == 2)
-        let firstSpan = mockTracer.spans[0]
+        let relevantSpans = mockTracer.spans.filter { $0.attributes["study.name"] == studyName }
+        #expect(relevantSpans.count == 2)
+        let firstSpan = relevantSpans[0]
         #expect(firstSpan.name == "swiftuna.trial")
-        #expect(firstSpan.attributes["study.name"] == "telemetry_study")
+        #expect(firstSpan.attributes["study.name"] == studyName)
         #expect(firstSpan.attributes["trial.number"] == "0")
         #expect(firstSpan.attributes["trial.status"] == "complete")
         #expect(firstSpan.attributes["trial.duration_ms"] != nil)

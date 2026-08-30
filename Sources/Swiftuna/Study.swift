@@ -82,10 +82,7 @@ public final class Study: @unchecked Sendable {
 
         var intermediateJsonStr: String? = nil
         if !intermediateSteps.isEmpty {
-            var stepMap: [String: Double] = [:]
-            for s in intermediateSteps {
-                stepMap[String(s.step)] = s.value
-            }
+            let stepMap = Dictionary(uniqueKeysWithValues: intermediateSteps.map { (String($0.step), $0.value) })
             if let data = try? JSONEncoder().encode(stepMap) {
                 intermediateJsonStr = String(data: data, encoding: .utf8)
             }
@@ -235,26 +232,21 @@ public final class Study: @unchecked Sendable {
         nTrials: Int,
         objective: (inout Trial) throws(E) -> Double
     ) throws {
-        for _ in 0..<nTrials {
-            var trial = try ask()
-            let evalResult: Result<Double, E>
+        var caughtError: E?
+        try optimize(nTrials: nTrials) { (trial: inout Trial) throws(SwiftunaError) -> Double in
             do {
-                let val = try objective(&trial)
-                evalResult = .success(val)
+                return try objective(&trial)
+            } catch let err as SwiftunaError {
+                throw err
+            } catch let err as E {
+                caughtError = err
+                throw SwiftunaError.objectiveError("\(err)")
             } catch {
-                evalResult = .failure(error)
+                throw SwiftunaError.objectiveError("\(error)")
             }
-            switch evalResult {
-            case .success(let val):
-                try tell(consuming: trial, value: val, state: .complete)
-            case .failure(let err):
-                if let swiftunaErr = err as? SwiftunaError, case .trialPruned(_) = swiftunaErr {
-                    try tell(consuming: trial, values: [], state: .pruned)
-                } else {
-                    try tell(consuming: trial, values: [], state: .fail)
-                    throw err
-                }
-            }
+        }
+        if let err = caughtError {
+            throw err
         }
     }
 
@@ -437,12 +429,9 @@ public final class Study: @unchecked Sendable {
         let intermediateMap: [String: Double] = decodeJsonMap {
             rustuna_persisted_trial_get_intermediate_values_json(trialPtr, $0)
         }
-        var intermediateValues: [Int: Double] = [:]
-        for (k, v) in intermediateMap {
-            if let step = Int(k) {
-                intermediateValues[step] = v
-            }
-        }
+        let intermediateValues = Dictionary(uniqueKeysWithValues: intermediateMap.compactMap { k, v in
+            Int(k).map { ($0, v) }
+        })
 
         var startStrPtr: UnsafeMutablePointer<CChar>?
         var datetimeStart: Date? = nil
@@ -473,19 +462,15 @@ public final class Study: @unchecked Sendable {
     }
 
     private func parseOptunaDate(_ str: String) -> Date? {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = isoFormatter.date(from: str) { return d }
-        isoFormatter.formatOptions = [.withInternetDateTime]
-        if let d = isoFormatter.date(from: str) { return d }
-
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(secondsFromGMT: 0)
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
-        if let d = df.date(from: str) { return d }
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return df.date(from: str)
+        if let d = try? Date(str, strategy: .iso8601) {
+            return d
+        }
+        // SQLite format "yyyy-MM-dd HH:mm:ss.SSSSSS" -> normalize to ISO8601 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ"
+        var isoStr = str.replacingOccurrences(of: " ", with: "T")
+        if !isoStr.hasSuffix("Z") && !isoStr.contains("+") {
+            isoStr.append("Z")
+        }
+        return try? Date(isoStr, strategy: .iso8601)
     }
 
     @inline(always)
@@ -720,14 +705,9 @@ public final class Study: @unchecked Sendable {
             let system_attrs: [String: String]?
         }
 
-        var intMap: [String: Double]? = nil
-        if !trial.intermediateValues.isEmpty {
-            var m: [String: Double] = [:]
-            for (step, val) in trial.intermediateValues {
-                m[String(step)] = val
-            }
-            intMap = m
-        }
+        let intMap = trial.intermediateValues.isEmpty ? nil : Dictionary(
+            uniqueKeysWithValues: trial.intermediateValues.map { (String($0.key), $0.value) }
+        )
 
         let payload = AddTrialJSONPayload(
             state: trial.state.rawValue,

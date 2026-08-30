@@ -10,16 +10,16 @@ build-ffi-release:
     strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
 
 build: build-ffi
-    swift build
+    bash -c 'set -o pipefail; swift build 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
 
 build-release: build-ffi-release
-    RUST_CONFIGURATION=release swift build -c release
+    bash -c 'set -o pipefail; RUST_CONFIGURATION=release swift build -c release 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
 
 test: build-ffi
-    swift test
+    bash -c 'set -o pipefail; swift test 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
 
 test-prop: build-ffi
-    swift test --filter PropertyTests
+    bash -c 'set -o pipefail; swift test --filter PropertyTests 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
 
 parity: build-ffi
     swift run SwiftunaParity

@@ -25,59 +25,41 @@ public struct NopPruner: Pruner {
     }
 }
 
-/// Pruner that prunes if the trial's best intermediate value is worse than the median of
-/// intermediate values of previous trials at the same step.
+/// Pruner that prunes if the trial's best intermediate value is worse than the median (50th percentile)
+/// of intermediate values of previous trials at the same step.
 public struct MedianPruner: Pruner {
-    public let nStartupTrials: Int
-    public let nWarmupSteps: Int
-    public let intervalSteps: Int
+    public let underlying: PercentilePruner
+
+    public var nStartupTrials: Int { underlying.nStartupTrials }
+    public var nWarmupSteps: Int { underlying.nWarmupSteps }
+    public var intervalSteps: Int { underlying.intervalSteps }
 
     public init(
         nStartupTrials: Int = 5,
         nWarmupSteps: Int = 0,
         intervalSteps: Int = 1
     ) {
-        self.nStartupTrials = max(0, nStartupTrials)
-        self.nWarmupSteps = max(0, nWarmupSteps)
-        self.intervalSteps = max(1, intervalSteps)
+        self.underlying = PercentilePruner(
+            percentile: 50.0,
+            nStartupTrials: nStartupTrials,
+            nWarmupSteps: nWarmupSteps,
+            intervalSteps: intervalSteps
+        )
     }
 
+    @inline(__always)
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
         step: Int,
         currentValue: Double
     ) throws(SwiftunaError) -> Bool {
-        if step < nWarmupSteps || step % intervalSteps != 0 {
-            return false
-        }
-
-        let allTrials = try study.trials
-        let previousTrials = allTrials.filter { $0.number < trialNumber && ($0.state == .complete || $0.state == .pruned) }
-
-        if previousTrials.count < nStartupTrials {
-            return false
-        }
-
-        let valuesAtStep: [Double] = previousTrials.compactMap { $0.intermediateValues[step] }
-        guard !valuesAtStep.isEmpty else {
-            return false
-        }
-
-        let sortedValues = valuesAtStep.sorted()
-        let median: Double
-        let count = sortedValues.count
-        if count % 2 == 1 {
-            median = sortedValues[count / 2]
-        } else {
-            median = (sortedValues[count / 2 - 1] + sortedValues[count / 2]) / 2.0
-        }
-
-        if study.direction == .minimize {
-            return currentValue > median
-        } else {
-            return currentValue < median
-        }
+        try underlying.shouldPrune(
+            study: study,
+            trialNumber: trialNumber,
+            step: step,
+            currentValue: currentValue
+        )
     }
 }
 
