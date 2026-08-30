@@ -253,5 +253,13 @@ public struct Trial: ~Copyable {
     public var constraints: [String: Double] {
         localConstraints
     }
+
+    public subscript<K: ConstraintKey>(_ key: K.Type) -> Double? {
+        localConstraints[K.name]
+    }
+
+    public subscript(constraint name: String) -> Double? {
+        localConstraints[name]
+    }
 }
 

@@ -93,14 +93,6 @@ public struct QMCSampler: Sampler {
     }
 
     public func makeRawHandle() -> OpaquePointer? {
-        var rawPtr: OpaquePointer?
-        let hasSeed = seed != nil
-        let seedVal = seed ?? 0
-        let status = rustuna_sampler_qmc_new(seedVal, hasSeed, &rawPtr)
-        if status != 0 {
-            return nil
-        }
-        return rawPtr
+        rustuna_sampler_qmc_new(seed ?? 0, seed != nil)
     }
 }
-

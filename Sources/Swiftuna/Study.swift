@@ -219,7 +219,7 @@ public final class Study: @unchecked Sendable {
             guard directions.count <= 1 else {
                 throw SwiftunaError.unsupportedMultiObjective
             }
-            return try trials.completed().feasible().bestFeasible(direction: direction)
+            return try trials.bestFeasible(direction: direction)
         }
     }
 
@@ -310,47 +310,9 @@ public final class Study: @unchecked Sendable {
             }
         }
 
-        var jsonPtr: UnsafeMutablePointer<CChar>?
-        let jsonStatus = rustuna_persisted_trial_get_params_json(trialPtr, &jsonPtr)
-        var params: [String: Double] = [:]
-
-        if jsonStatus == 0, let jsonPtr {
-            defer { rustuna_string_free(jsonPtr) }
-            let jsonString = String(cString: jsonPtr)
-            if let data = jsonString.data(using: .utf8),
-                let parsed = try? JSONDecoder().decode([String: Double].self, from: data)
-            {
-                params = parsed
-            }
-        }
-
-        var userAttrsJsonPtr: UnsafeMutablePointer<CChar>?
-        let userAttrsStatus = rustuna_persisted_trial_get_user_attrs_json(trialPtr, &userAttrsJsonPtr)
-        var userAttrs: [String: String] = [:]
-
-        if userAttrsStatus == 0, let userAttrsJsonPtr {
-            defer { rustuna_string_free(userAttrsJsonPtr) }
-            let jsonString = String(cString: userAttrsJsonPtr)
-            if let data = jsonString.data(using: .utf8),
-                let parsed = try? JSONDecoder().decode([String: String].self, from: data)
-            {
-                userAttrs = parsed
-            }
-        }
-
-        var constraintsJsonPtr: UnsafeMutablePointer<CChar>?
-        let constraintsStatus = rustuna_persisted_trial_get_constraints_json(trialPtr, &constraintsJsonPtr)
-        var constraints: [String: Double] = [:]
-
-        if constraintsStatus == 0, let constraintsJsonPtr {
-            defer { rustuna_string_free(constraintsJsonPtr) }
-            let jsonString = String(cString: constraintsJsonPtr)
-            if let data = jsonString.data(using: .utf8),
-                let parsed = try? JSONDecoder().decode([String: Double].self, from: data)
-            {
-                constraints = parsed
-            }
-        }
+        let params: [String: Double] = decodeJsonMap { rustuna_persisted_trial_get_params_json(trialPtr, $0) }
+        let userAttrs: [String: String] = decodeJsonMap { rustuna_persisted_trial_get_user_attrs_json(trialPtr, $0) }
+        let constraints: [String: Double] = decodeJsonMap { rustuna_persisted_trial_get_constraints_json(trialPtr, $0) }
 
         return PersistedTrial(
             number: num,
@@ -361,6 +323,17 @@ public final class Study: @unchecked Sendable {
             userAttrs: userAttrs,
             constraints: constraints
         )
+    }
+
+    @inline(always)
+    private func decodeJsonMap<T: Decodable>(
+        _ fetch: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
+    ) -> [String: T] {
+        var cStrPtr: UnsafeMutablePointer<CChar>?
+        guard fetch(&cStrPtr) == 0, let cStrPtr else { return [:] }
+        defer { rustuna_string_free(cStrPtr) }
+        guard let data = String(cString: cStrPtr).data(using: .utf8) else { return [:] }
+        return (try? JSONDecoder().decode([String: T].self, from: data)) ?? [:]
     }
 
     // MARK: - Study User Attributes & Analytics

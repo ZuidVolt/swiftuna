@@ -188,34 +188,22 @@ pub extern "C" fn rustuna_sampler_nsgaii_new(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rustuna_sampler_qmc_new(
-    seed: u64,
-    has_seed: bool,
-    out_sampler: *mut *mut RustunaSampler,
-) -> i32 {
-    if out_sampler.is_null() {
-        set_last_error(-1, "out_sampler pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
+pub extern "C" fn rustuna_sampler_qmc_new(seed: u64, has_seed: bool) -> *mut RustunaSampler {
+    let result = catch_unwind(AssertUnwindSafe(|| {
         let sampler = if has_seed {
             QmcSampler::seed_from_u64(seed)
         } else {
             QmcSampler::new()
         };
-        let boxed = Box::new(RustunaSampler {
+        Box::into_raw(Box::new(RustunaSampler {
             inner: Arc::new(sampler),
-        });
-        unsafe {
-            *out_sampler = Box::into_raw(boxed);
-        }
-        0
+        }))
     }));
-    match res {
-        Ok(code) => code,
+    match result {
+        Ok(ptr) => ptr,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_sampler_qmc_new: {e:?}"));
-            -99
+            set_last_error(-99, format!("Panic creating QMC sampler: {e:?}"));
+            std::ptr::null_mut()
         }
     }
 }
@@ -863,44 +851,6 @@ pub extern "C" fn rustuna_trial_set_constraint(
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_trial_set_constraints_json(
-    trial: *mut RustunaTrial,
-    json_str: *const c_char,
-) -> i32 {
-    if trial.is_null() || json_str.is_null() {
-        set_last_error(-1, "trial or json_str pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let t = unsafe { &mut *trial };
-        let s = unsafe { CStr::from_ptr(json_str) }.to_string_lossy();
-        let map: HashMap<String, f64> = match serde_json::from_str(&s) {
-            Ok(m) => m,
-            Err(e) => {
-                set_last_error(-1, format!("Invalid JSON for constraints: {e}"));
-                return -1;
-            }
-        };
-        for (k, v) in &map {
-            if v.is_nan() {
-                set_last_error(-1, format!("Constraint value for '{k}' cannot be NaN"));
-                return -1;
-            }
-        }
-        match t.inner.set_constraints(map) {
-            Ok(()) => 0,
-            Err(e) => set_rustuna_error(&e),
-        }
-    }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_trial_set_constraints_json: {e:?}"));
-            -99
-        }
-    }
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rustuna_trial_free(trial: *mut RustunaTrial) {

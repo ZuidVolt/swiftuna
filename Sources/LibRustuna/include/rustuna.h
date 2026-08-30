@@ -31,11 +31,7 @@ int32_t rustuna_sampler_nsgaii_new(
     uint64_t seed,
     RustunaSampler** out_sampler
 );
-int32_t rustuna_sampler_qmc_new(
-    uint64_t seed,
-    bool has_seed,
-    RustunaSampler** out_sampler
-);
+RustunaSampler* rustuna_sampler_qmc_new(uint64_t seed, bool has_seed);
 void rustuna_sampler_free(RustunaSampler* sampler);
 
 // Study APIs
@@ -128,7 +124,6 @@ int32_t rustuna_trial_suggest_categorical(
 );
 int32_t rustuna_trial_set_user_attr(RustunaTrial* trial, const char* key, const char* val);
 int32_t rustuna_trial_set_constraint(RustunaTrial* trial, const char* key, double value);
-int32_t rustuna_trial_set_constraints_json(RustunaTrial* trial, const char* json_str);
 void rustuna_trial_free(RustunaTrial* trial);
 
 // PersistedTrial APIs (Frozen immutable trial)
