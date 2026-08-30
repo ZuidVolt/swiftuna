@@ -50,13 +50,8 @@ extension StorageBackend {
     /// Returns all studies stored in this storage backend.
     public func studies() throws(SwiftunaError) -> [StudySummary] {
         var jsonPtr: UnsafeMutablePointer<CChar>?
-        let path = pathString
-        let status = if let path {
-            path.withCString { cPath in
-                rustuna_storage_get_studies_json(rawStorageType, cPath, &jsonPtr)
-            }
-        } else {
-            rustuna_storage_get_studies_json(rawStorageType, nil, &jsonPtr)
+        let status = withOptionalCString(pathString) { cPath in
+            rustuna_storage_get_studies_json(rawStorageType, cPath, &jsonPtr)
         }
 
         guard status == 0, let jsonPtr else {
@@ -74,14 +69,9 @@ extension StorageBackend {
 
     /// Deletes a study from this storage backend by name.
     public func deleteStudy(named name: String) throws(SwiftunaError) {
-        let path = pathString
         let status = name.withCString { cName in
-            if let path {
-                return path.withCString { cPath in
-                    rustuna_storage_delete_study(rawStorageType, cPath, cName)
-                }
-            } else {
-                return rustuna_storage_delete_study(rawStorageType, nil, cName)
+            withOptionalCString(pathString) { cPath in
+                rustuna_storage_delete_study(rawStorageType, cPath, cName)
             }
         }
         if status != 0 {

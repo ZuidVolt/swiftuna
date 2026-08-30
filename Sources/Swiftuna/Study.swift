@@ -268,19 +268,7 @@ public final class Study: @unchecked Sendable {
 
     public var trials: [PersistedTrial] {
         get throws(SwiftunaError) {
-            guard let raw else {
-                throw SwiftunaError.handleExpired("Study handle is invalid")
-            }
-
-            var trialsPtr: UnsafeMutablePointer<OpaquePointer?>?
-            var count: Int = 0
-            let status = rustuna_study_get_trials(raw, &trialsPtr, &count)
-
-            if status != 0 {
-                throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to get study trials")
-            }
-
-            return parseTrialsBuffer(trialsPtr, count: count)
+            try trials(where: Set(TrialState.allCases))
         }
     }
 
@@ -291,23 +279,9 @@ public final class Study: @unchecked Sendable {
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is invalid")
         }
+        guard !states.isEmpty else { return [] }
 
-        var mask: UInt32 = 0
-        for state in states {
-            switch state {
-            case .running:
-                mask |= (1 << 0)
-            case .complete:
-                mask |= (1 << 1)
-            case .pruned:
-                mask |= (1 << 2)
-            case .waiting:
-                mask |= (1 << 3)
-            case .fail:
-                mask |= (1 << 4)
-            }
-        }
-
+        let mask = states.reduce(UInt32(0)) { $0 | (1 << $1.rawValue) }
         var trialsPtr: UnsafeMutablePointer<OpaquePointer?>?
         var count: Int = 0
         let status = rustuna_study_get_trials_filtered(raw, mask, &trialsPtr, &count)
@@ -342,16 +316,11 @@ public final class Study: @unchecked Sendable {
         }
 
         var outStudy: OpaquePointer?
-        let destPath = destination.pathString
         let targetName = newName ?? name
 
         let status = targetName.withCString { cName in
-            if let destPath {
-                destPath.withCString { cPath in
-                    rustuna_study_copy(raw, destination.rawStorageType, cPath, cName, &outStudy)
-                }
-            } else {
-                rustuna_study_copy(raw, destination.rawStorageType, nil, cName, &outStudy)
+            withOptionalCString(destination.pathString) { cPath in
+                rustuna_study_copy(raw, destination.rawStorageType, cPath, cName, &outStudy)
             }
         }
 

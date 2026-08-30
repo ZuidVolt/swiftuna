@@ -982,52 +982,7 @@ pub extern "C" fn rustuna_study_get_trials(
     out_trials: *mut *mut *mut RustunaPersistedTrial,
     out_len: *mut usize,
 ) -> i32 {
-    if study.is_null() || out_trials.is_null() || out_len.is_null() {
-        set_last_error(-1, "study, out_trials, or out_len pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let s = unsafe { &mut *study };
-        let mut guard = match s.inner.storage.write() {
-            Ok(g) => g,
-            Err(e) => {
-                set_last_error(3, format!("Storage lock poisoned: {e:?}"));
-                return 3;
-            }
-        };
-
-        let trials_vec = match guard.get_trials(s.inner.id) {
-            Ok(v) => v.clone(),
-            Err(e) => {
-                return set_rustuna_error(&e);
-            }
-        };
-
-        let mut pt_ptrs: Vec<*mut RustunaPersistedTrial> = trials_vec
-            .into_iter()
-            .flatten()
-            .map(|t| Box::into_raw(Box::new(RustunaPersistedTrial { inner: t })))
-            .collect();
-
-        pt_ptrs.shrink_to_fit();
-        let len = pt_ptrs.len();
-        let ptr = pt_ptrs.as_mut_ptr();
-        std::mem::forget(pt_ptrs);
-
-        unsafe {
-            *out_trials = ptr;
-            *out_len = len;
-        }
-        0
-    }));
-
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_get_trials: {e:?}"));
-            -99
-        }
-    }
+    rustuna_study_get_trials_filtered(study, u32::MAX, out_trials, out_len)
 }
 
 #[unsafe(no_mangle)]
@@ -1265,6 +1220,69 @@ struct SerializableStudySummary {
     trial_count: u32,
 }
 
+fn copy_study_core(
+    from_storage: Arc<RwLock<dyn Storage>>,
+    from_study_id: u32,
+    to_storage: Arc<RwLock<dyn Storage>>,
+    to_study_name: &str,
+) -> Result<u32, i32> {
+    let (from_directions, from_attrs, trials) = {
+        let mut guard = match from_storage.write() {
+            Ok(g) => g,
+            Err(e) => {
+                set_last_error(3, format!("Source storage lock poisoned: {e:?}"));
+                return Err(3);
+            }
+        };
+        let study_info = match guard.get_study(from_study_id) {
+            Ok(st) => st.clone(),
+            Err(e) => return Err(set_rustuna_error(&e)),
+        };
+        let trials = match guard.get_trials(from_study_id) {
+            Ok(t) => t.clone(),
+            Err(e) => return Err(set_rustuna_error(&e)),
+        };
+        (study_info.directions, study_info.attrs, trials)
+    };
+
+    let mut dest_guard = match to_storage.write() {
+        Ok(g) => g,
+        Err(e) => {
+            set_last_error(3, format!("Destination storage lock poisoned: {e:?}"));
+            return Err(3);
+        }
+    };
+
+    let existing_studies = match dest_guard.get_studies() {
+        Ok(st) => st.clone(),
+        Err(e) => return Err(set_rustuna_error(&e)),
+    };
+    if existing_studies.iter().any(|st| st.name == to_study_name) {
+        set_last_error(4, format!("Study '{to_study_name}' already exists in destination storage"));
+        return Err(4);
+    }
+
+    let new_study = match dest_guard.create_new_study(to_study_name, from_directions) {
+        Ok(ns) => ns.clone(),
+        Err(e) => return Err(set_rustuna_error(&e)),
+    };
+    let new_id = new_study.id;
+
+    if !from_attrs.is_empty() {
+        if let Err(e) = dest_guard.set_study_attrs(new_id, from_attrs, false) {
+            return Err(set_rustuna_error(&e));
+        }
+    }
+
+    for trial in trials.into_iter().flatten() {
+        if let Err(e) = dest_guard.create_new_trial_from_template(new_id, &trial) {
+            return Err(set_rustuna_error(&e));
+        }
+    }
+
+    Ok(new_id)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rustuna_study_copy(
     study: *mut RustunaStudy,
@@ -1290,70 +1308,15 @@ pub extern "C" fn rustuna_study_copy(
             unsafe { CStr::from_ptr(to_study_name) }.to_string_lossy().into_owned()
         };
 
-        // Extract from source study
-        let (from_directions, from_attrs, trials) = {
-            let mut guard = match s.inner.storage.write() {
-                Ok(g) => g,
-                Err(e) => {
-                    set_last_error(3, format!("Source storage lock poisoned: {e:?}"));
-                    return 3;
-                }
-            };
-            let study_info = match guard.get_study(s.inner.id) {
-                Ok(st) => st.clone(),
-                Err(e) => return set_rustuna_error(&e),
-            };
-            let trials = match guard.get_trials(s.inner.id) {
-                Ok(t) => t.clone(),
-                Err(e) => return set_rustuna_error(&e),
-            };
-            (study_info.directions, study_info.attrs, trials)
-        };
-
-        // Open destination storage
         let dest_storage = match create_storage_backend(to_storage_type, &dest_storage_path) {
             Ok(st) => st,
             Err(e) => return set_rustuna_error(&e),
         };
 
-        // Populate destination
-        {
-            let mut dest_guard = match dest_storage.write() {
-                Ok(g) => g,
-                Err(e) => {
-                    set_last_error(3, format!("Destination storage lock poisoned: {e:?}"));
-                    return 3;
-                }
-            };
-            let existing_studies = match dest_guard.get_studies() {
-                Ok(st) => st.clone(),
-                Err(e) => return set_rustuna_error(&e),
-            };
-            if existing_studies.iter().any(|st| st.name == dest_study_name) {
-                set_last_error(4, format!("Study '{dest_study_name}' already exists in destination storage"));
-                return 4;
-            }
-
-            let new_study = match dest_guard.create_new_study(&dest_study_name, from_directions) {
-                Ok(ns) => ns.clone(),
-                Err(e) => return set_rustuna_error(&e),
-            };
-            let new_id = new_study.id;
-
-            if !from_attrs.is_empty() {
-                if let Err(e) = dest_guard.set_study_attrs(new_id, from_attrs, false) {
-                    return set_rustuna_error(&e);
-                }
-            }
-
-            for trial in trials.into_iter().flatten() {
-                if let Err(e) = dest_guard.create_new_trial_from_template(new_id, &trial) {
-                    return set_rustuna_error(&e);
-                }
-            }
+        if let Err(code) = copy_study_core(s.inner.storage.clone(), s.inner.id, dest_storage.clone(), &dest_study_name) {
+            return code;
         }
 
-        // Instantiate Study on destination storage
         let new_study_instance = match Study::from_name(dest_study_name, dest_storage, s.inner.sampler.clone()) {
             Ok(st) => st,
             Err(e) => return set_rustuna_error(&e),
@@ -1413,7 +1376,7 @@ pub extern "C" fn rustuna_storage_copy_study(
             Err(e) => return set_rustuna_error(&e),
         };
 
-        let (from_directions, from_attrs, trials) = {
+        let src_study_id = {
             let mut guard = match src_storage.write() {
                 Ok(g) => g,
                 Err(e) => {
@@ -1425,18 +1388,13 @@ pub extern "C" fn rustuna_storage_copy_study(
                 Ok(s) => s.clone(),
                 Err(e) => return set_rustuna_error(&e),
             };
-            let from_study = match studies.iter().find(|s| s.name == src_name) {
-                Some(s) => s.clone(),
+            match studies.iter().find(|s| s.name == src_name) {
+                Some(s) => s.id,
                 None => {
                     set_last_error(5, format!("Study '{src_name}' not found"));
                     return 5;
                 }
-            };
-            let trials = match guard.get_trials(from_study.id) {
-                Ok(t) => t.clone(),
-                Err(e) => return set_rustuna_error(&e),
-            };
-            (from_study.directions, from_study.attrs, trials)
+            }
         };
 
         let dest_storage = match create_storage_backend(to_storage_type, &dest_path) {
@@ -1444,41 +1402,10 @@ pub extern "C" fn rustuna_storage_copy_study(
             Err(e) => return set_rustuna_error(&e),
         };
 
-        let mut dest_guard = match dest_storage.write() {
-            Ok(g) => g,
-            Err(e) => {
-                set_last_error(3, format!("Destination storage lock poisoned: {e:?}"));
-                return 3;
-            }
-        };
-
-        let existing = match dest_guard.get_studies() {
-            Ok(s) => s.clone(),
-            Err(e) => return set_rustuna_error(&e),
-        };
-        if existing.iter().any(|s| s.name == dest_name) {
-            set_last_error(4, format!("Study '{dest_name}' already exists in destination storage"));
-            return 4;
+        match copy_study_core(src_storage, src_study_id, dest_storage, &dest_name) {
+            Ok(_) => 0,
+            Err(code) => code,
         }
-
-        let new_study = match dest_guard.create_new_study(&dest_name, from_directions) {
-            Ok(ns) => ns.clone(),
-            Err(e) => return set_rustuna_error(&e),
-        };
-
-        if !from_attrs.is_empty() {
-            if let Err(e) = dest_guard.set_study_attrs(new_study.id, from_attrs, false) {
-                return set_rustuna_error(&e);
-            }
-        }
-
-        for trial in trials.into_iter().flatten() {
-            if let Err(e) = dest_guard.create_new_trial_from_template(new_study.id, &trial) {
-                return set_rustuna_error(&e);
-            }
-        }
-
-        0
     }));
 
     match res {

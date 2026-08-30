@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TrialState: Int32, Sendable {
+public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
     case running = 0
     case complete = 1
     case pruned = 2

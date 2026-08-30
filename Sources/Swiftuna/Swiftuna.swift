@@ -174,32 +174,21 @@ public func copyStudy(
     toName: String? = nil,
     toStorage: StorageBackend
 ) throws(SwiftunaError) {
-    let srcPath = fromStorage.pathString
-    let destPath = toStorage.pathString
     let targetName = toName ?? fromName
 
     let status = fromName.withCString { cSrcName in
         targetName.withCString { cDestName in
-            let invoke = { (cSrcPath: UnsafePointer<CChar>?, cDestPath: UnsafePointer<CChar>?) -> Int32 in
-                rustuna_storage_copy_study(
-                    fromStorage.rawStorageType,
-                    cSrcPath,
-                    cSrcName,
-                    toStorage.rawStorageType,
-                    cDestPath,
-                    cDestName
-                )
-            }
-            if let srcPath, let destPath {
-                return srcPath.withCString { cSrc in
-                    destPath.withCString { cDest in invoke(cSrc, cDest) }
+            withOptionalCString(fromStorage.pathString) { cSrc in
+                withOptionalCString(toStorage.pathString) { cDest in
+                    rustuna_storage_copy_study(
+                        fromStorage.rawStorageType,
+                        cSrc,
+                        cSrcName,
+                        toStorage.rawStorageType,
+                        cDest,
+                        cDestName
+                    )
                 }
-            } else if let srcPath {
-                return srcPath.withCString { cSrc in invoke(cSrc, nil) }
-            } else if let destPath {
-                return destPath.withCString { cDest in invoke(nil, cDest) }
-            } else {
-                return invoke(nil, nil)
             }
         }
     }
