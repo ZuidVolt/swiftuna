@@ -1,0 +1,128 @@
+{
+  "problem_name": "integer_grid",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "params": {
+        "n_layers": 6.0,
+        "hidden_units": 128.0
+      },
+      "value": 256.0
+    },
+    {
+      "number": 1,
+      "params": {
+        "hidden_units": 224.0,
+        "n_layers": 6.0
+      },
+      "value": 832.0
+    },
+    {
+      "number": 2,
+      "params": {
+        "n_layers": 1.0,
+        "hidden_units": 192.0
+      },
+      "value": 320.0
+    },
+    {
+      "number": 3,
+      "params": {
+        "hidden_units": 256.0,
+        "n_layers": 2.0
+      },
+      "value": 0.0
+    },
+    {
+      "number": 4,
+      "params": {
+        "hidden_units": 192.0,
+        "n_layers": 8.0
+      },
+      "value": 1024.0
+    },
+    {
+      "number": 5,
+      "params": {
+        "n_layers": 6.0,
+        "hidden_units": 160.0
+      },
+      "value": 448.0
+    },
+    {
+      "number": 6,
+      "params": {
+        "n_layers": 8.0,
+        "hidden_units": 192.0
+      },
+      "value": 1024.0
+    },
+    {
+      "number": 7,
+      "params": {
+        "hidden_units": 32.0,
+        "n_layers": 3.0
+      },
+      "value": 416.0
+    },
+    {
+      "number": 8,
+      "params": {
+        "hidden_units": 256.0,
+        "n_layers": 4.0
+      },
+      "value": 512.0
+    },
+    {
+      "number": 9,
+      "params": {
+        "hidden_units": 160.0,
+        "n_layers": 6.0
+      },
+      "value": 448.0
+    },
+    {
+      "number": 10,
+      "params": {
+        "hidden_units": 64.0,
+        "n_layers": 8.0
+      },
+      "value": 0.0
+    },
+    {
+      "number": 11,
+      "params": {
+        "hidden_units": 32.0,
+        "n_layers": 7.0
+      },
+      "value": 288.0
+    },
+    {
+      "number": 12,
+      "params": {
+        "hidden_units": 96.0,
+        "n_layers": 4.0
+      },
+      "value": 128.0
+    },
+    {
+      "number": 13,
+      "params": {
+        "n_layers": 1.0,
+        "hidden_units": 96.0
+      },
+      "value": 416.0
+    },
+    {
+      "number": 14,
+      "params": {
+        "hidden_units": 192.0,
+        "n_layers": 4.0
+      },
+      "value": 256.0
+    }
+  ],
+  "best_trial_number": 3,
+  "best_value": 0.0
+}

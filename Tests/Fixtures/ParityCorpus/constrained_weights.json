@@ -1,0 +1,143 @@
+{
+  "problem_name": "constrained_weights",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "params": {
+        "sink_weight": 1.6,
+        "param_weight": 1.5,
+        "mutation_weight": 1.7000000000000002
+      },
+      "value": 1310.0
+    },
+    {
+      "number": 1,
+      "params": {
+        "param_weight": 1.5,
+        "mutation_weight": 1.2000000000000002,
+        "sink_weight": 1.9000000000000001
+      },
+      "value": 1380.0
+    },
+    {
+      "number": 2,
+      "params": {
+        "sink_weight": 1.2,
+        "mutation_weight": 2.2,
+        "param_weight": 1.9000000000000001
+      },
+      "value": 1200.0
+    },
+    {
+      "number": 3,
+      "params": {
+        "param_weight": 1.9000000000000001,
+        "sink_weight": 0.2,
+        "mutation_weight": 1.4000000000000001
+      },
+      "value": 0.9100000000000003
+    },
+    {
+      "number": 4,
+      "params": {
+        "mutation_weight": 1.6,
+        "sink_weight": 0.9000000000000001,
+        "param_weight": 0.6
+      },
+      "value": 1020.0000000000001
+    },
+    {
+      "number": 5,
+      "params": {
+        "param_weight": 0.8,
+        "mutation_weight": 2.8,
+        "sink_weight": 1.8
+      },
+      "value": 1500.0
+    },
+    {
+      "number": 6,
+      "params": {
+        "mutation_weight": 1.0,
+        "sink_weight": 1.6,
+        "param_weight": 0.7
+      },
+      "value": 1240.0
+    },
+    {
+      "number": 7,
+      "params": {
+        "mutation_weight": 2.4000000000000004,
+        "sink_weight": 1.6,
+        "param_weight": 1.3
+      },
+      "value": 1380.0
+    },
+    {
+      "number": 8,
+      "params": {
+        "param_weight": 1.3,
+        "sink_weight": 0.2,
+        "mutation_weight": 0.8
+      },
+      "value": 0.6699999999999999
+    },
+    {
+      "number": 9,
+      "params": {
+        "param_weight": 0.8,
+        "mutation_weight": 1.7000000000000002,
+        "sink_weight": 0.7
+      },
+      "value": 0.12000000000000002
+    },
+    {
+      "number": 10,
+      "params": {
+        "sink_weight": 0.2,
+        "mutation_weight": 2.6,
+        "param_weight": 0.6
+      },
+      "value": 1.4600000000000002
+    },
+    {
+      "number": 11,
+      "params": {
+        "param_weight": 1.4,
+        "sink_weight": 0.2,
+        "mutation_weight": 1.0
+      },
+      "value": 0.4999999999999999
+    },
+    {
+      "number": 12,
+      "params": {
+        "sink_weight": 0.8,
+        "param_weight": 1.0,
+        "mutation_weight": 0.9
+      },
+      "value": 0.45
+    },
+    {
+      "number": 13,
+      "params": {
+        "mutation_weight": 1.5,
+        "sink_weight": 0.8,
+        "param_weight": 1.0
+      },
+      "value": 0.09000000000000002
+    },
+    {
+      "number": 14,
+      "params": {
+        "sink_weight": 0.8,
+        "param_weight": 1.0,
+        "mutation_weight": 1.5
+      },
+      "value": 0.09000000000000002
+    }
+  ],
+  "best_trial_number": 13,
+  "best_value": 0.09000000000000002
+}

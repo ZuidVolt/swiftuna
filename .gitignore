@@ -1,0 +1,15 @@
+# IDE specific files
+.vscode/
+.idea/
+.ropeproject/
+# Miscellaneous
+.DS_Store
+*.log
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+xcuserdata/
+DerivedData/
+*.xcodeproj
+crates/rustuna-ffi/target/

@@ -1,0 +1,113 @@
+{
+  "problem_name": "categorical_grid",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 1,
+      "params": {
+        "optimizer": 0.0
+      },
+      "value": 0.12
+    },
+    {
+      "number": 2,
+      "params": {
+        "optimizer": 2.0
+      },
+      "value": 0.28
+    },
+    {
+      "number": 3,
+      "params": {
+        "optimizer": 1.0
+      },
+      "value": 0.45
+    },
+    {
+      "number": 4,
+      "params": {
+        "optimizer": 0.0
+      },
+      "value": 0.12
+    },
+    {
+      "number": 5,
+      "params": {
+        "optimizer": 0.0
+      },
+      "value": 0.12
+    },
+    {
+      "number": 6,
+      "params": {
+        "optimizer": 1.0
+      },
+      "value": 0.45
+    },
+    {
+      "number": 7,
+      "params": {
+        "optimizer": 1.0
+      },
+      "value": 0.45
+    },
+    {
+      "number": 8,
+      "params": {
+        "optimizer": 2.0
+      },
+      "value": 0.28
+    },
+    {
+      "number": 9,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 10,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 11,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 12,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 13,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    },
+    {
+      "number": 14,
+      "params": {
+        "optimizer": 3.0
+      },
+      "value": 0.08
+    }
+  ],
+  "best_trial_number": 0,
+  "best_value": 0.08
+}
