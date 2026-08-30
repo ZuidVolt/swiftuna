@@ -39,38 +39,27 @@ public struct NoOpTelemetryTracer: TelemetryTracer {
     }
 }
 
+import Synchronization
+
+#if canImport(os)
+    import os
+#endif
+
 /// Thread-safe registry for Swiftuna telemetry and observability.
 public final class SwiftunaTelemetry: Sendable {
     public static let shared = SwiftunaTelemetry()
 
     #if canImport(os)
         internal static let logger = Logger(subsystem: "org.swiftuna", category: "optimization")
-        private let lock = OSAllocatedUnfairLock<(any TelemetryTracer)?>(initialState: nil)
-    #else
-        private final class Box: @unchecked Sendable {
-            var tracer: (any TelemetryTracer)?
-            let lock = NSLock()
-        }
-        private let box = Box()
     #endif
 
+    private let tracerState = Mutex<(any TelemetryTracer)?>(nil)
+
     public var tracer: any TelemetryTracer {
-        #if canImport(os)
-            lock.withLock { $0 } ?? NoOpTelemetryTracer()
-        #else
-            box.lock.lock()
-            defer { box.lock.unlock() }
-            return box.tracer ?? NoOpTelemetryTracer()
-        #endif
+        tracerState.withLock { $0 } ?? NoOpTelemetryTracer()
     }
 
     public func registerTracer(_ tracer: (any TelemetryTracer)?) {
-        #if canImport(os)
-            lock.withLock { $0 = tracer }
-        #else
-            box.lock.lock()
-            box.tracer = tracer
-            box.lock.unlock()
-        #endif
+        tracerState.withLock { $0 = tracer }
     }
 }

@@ -470,6 +470,8 @@ public final class Study: @unchecked Sendable {
         let datetime_complete: String?
     }
 
+    private static let trialDecoder = JSONDecoder()
+
     private func parsePersistedTrial(_ trialPtr: OpaquePointer) -> PersistedTrial {
         var cJson: UnsafeMutablePointer<CChar>?
         guard rustuna_persisted_trial_get_json(trialPtr, &cJson) == 0, let cJson else {
@@ -477,9 +479,9 @@ public final class Study: @unchecked Sendable {
         }
         defer { rustuna_string_free(cJson) }
 
-        guard let data = String(cString: cJson).data(using: .utf8),
-            let payload = try? JSONDecoder().decode(PersistedTrialJSONPayload.self, from: data)
-        else {
+        let len = strlen(cJson)
+        let data = Data(bytesNoCopy: cJson, count: len, deallocator: .none)
+        guard let payload = try? Self.trialDecoder.decode(PersistedTrialJSONPayload.self, from: data) else {
             return PersistedTrial(number: 0, state: .fail, value: nil, values: [], params: [:], userAttrs: [:])
         }
 
@@ -642,12 +644,9 @@ public final class Study: @unchecked Sendable {
         }
 
         let status = paramsJson.withCString { cParams in
-            if let userAttrsJson {
-                return userAttrsJson.withCString { cAttrs in
-                    rustuna_study_enqueue_trial(raw, cParams, cAttrs)
-                }
+            withOptionalCString(userAttrsJson) { cAttrs in
+                rustuna_study_enqueue_trial(raw, cParams, cAttrs)
             }
-            return rustuna_study_enqueue_trial(raw, cParams, nil)
         }
 
         if status != 0 {
@@ -685,13 +684,8 @@ public final class Study: @unchecked Sendable {
         }
 
         var outJsonPtr: UnsafeMutablePointer<CChar>?
-        let status: Int32
-        if let paramsJsonStr {
-            status = paramsJsonStr.withCString { cParams in
-                rustuna_study_get_param_importances(raw, normalize, cParams, &outJsonPtr)
-            }
-        } else {
-            status = rustuna_study_get_param_importances(raw, normalize, nil, &outJsonPtr)
+        let status = withOptionalCString(paramsJsonStr) { cParams in
+            rustuna_study_get_param_importances(raw, normalize, cParams, &outJsonPtr)
         }
 
         if status != 0 {
@@ -703,10 +697,10 @@ public final class Study: @unchecked Sendable {
         }
         defer { rustuna_string_free(outJsonPtr) }
 
-        let jsonString = String(cString: outJsonPtr)
-        guard let data = jsonString.data(using: .utf8),
-            let dict = try? JSONDecoder().decode([String: Double].self, from: data)
-        else {
+        let len = strlen(outJsonPtr)
+        let data = Data(bytesNoCopy: outJsonPtr, count: len, deallocator: .none)
+        guard let dict = try? Self.trialDecoder.decode([String: Double].self, from: data) else {
+            let jsonString = String(cString: outJsonPtr)
             return .failure(.unexpected("Failed to decode parameter importance payload: \(jsonString)"))
         }
 
