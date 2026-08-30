@@ -13,3 +13,4 @@ xcuserdata/
 DerivedData/
 *.xcodeproj
 crates/rustuna-ffi/target/
+docs/
