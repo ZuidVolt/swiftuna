@@ -43,3 +43,10 @@ reset:
     rm -rf .build Package.resolved
     swift package reset
     swift package resolve
+
+doc: build-ffi
+    swift package --allow-writing-to-directory ./docs generate-documentation --target Swiftuna --disable-indexing --transform-for-static-hosting --hosting-base-path swiftuna --output-path ./docs
+
+doc-preview: build-ffi
+    swift package --disable-sandbox preview-documentation --target Swiftuna
+

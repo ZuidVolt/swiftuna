@@ -2,6 +2,28 @@ public import Foundation
 internal import LibRustuna
 
 /// Creates a single-objective study with optional storage, custom sampler, and pruner.
+///
+/// - Parameters:
+///   - name: The unique study identifier. Defaults to `"default"`.
+///   - direction: Direction of optimization (either ``Direction/minimize`` or ``Direction/maximize``). Defaults to ``Direction/minimize``.
+///   - storage: Storage backend to persist study data. Defaults to ``StorageBackend/inMemory``.
+///   - sampler: Sampler algorithm for parameter suggestions (e.g. ``TPESampler``, ``QMCSampler``, ``GridSampler``).
+///   - pruner: Pruner algorithm for early stopping (e.g. ``MedianPruner``, ``HyperbandPruner``). Defaults to ``NopPruner``.
+///   - loadIfExists: If `true`, reloads an existing study with matching `name` from `storage` instead of throwing an error. Defaults to `false`.
+/// - Returns: An active ``Study`` instance ready for optimization.
+/// - Throws: ``SwiftunaError/duplicatedStudy(_:)`` if a study with `name` already exists and `loadIfExists` is `false`.
+///
+/// ### Example
+/// ```swift
+/// let study = try Swiftuna.createStudy(
+///     name: "hyperband_tuning",
+///     direction: .minimize,
+///     storage: .sqlite(path: "experiments.db"),
+///     sampler: TPESampler(),
+///     pruner: HyperbandPruner(),
+///     loadIfExists: true
+/// )
+/// ```
 public func createStudy<S: Sampler>(
     name: String = "default",
     direction: Direction = .minimize,
@@ -21,6 +43,15 @@ public func createStudy<S: Sampler>(
 }
 
 /// Creates a single-objective study with default TPESampler and optional pruner.
+///
+/// - Parameters:
+///   - name: The unique study identifier. Defaults to `"default"`.
+///   - direction: Direction of optimization (either ``Direction/minimize`` or ``Direction/maximize``). Defaults to ``Direction/minimize``.
+///   - storage: Storage backend to persist study data. Defaults to ``StorageBackend/inMemory``.
+///   - pruner: Pruner algorithm for early stopping (defaults to ``NopPruner``).
+///   - loadIfExists: If `true`, reloads an existing study with matching `name` from `storage` instead of throwing an error. Defaults to `false`.
+/// - Returns: An active ``Study`` instance ready for optimization.
+/// - Throws: ``SwiftunaError/duplicatedStudy(_:)`` if a study with `name` already exists and `loadIfExists` is `false`.
 public func createStudy(
     name: String = "default",
     direction: Direction = .minimize,

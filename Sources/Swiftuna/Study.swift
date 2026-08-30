@@ -31,6 +31,23 @@ internal struct OptimizationBudget: Sendable {
     }
 }
 
+/// An optimization study coordinating trials, samplers, pruners, and storage.
+///
+/// A study corresponds to an optimization task over a search space. It maintains trial history,
+/// samples parameter candidates using an active ``Sampler``, prunes unpromising trials via a ``Pruner``,
+/// and persists results across in-memory or SQLite storage backends.
+///
+/// Studies are typically created using ``Swiftuna/createStudy(name:direction:storage:sampler:pruner:loadIfExists:)``.
+///
+/// ### Example
+/// ```swift
+/// let study = try Swiftuna.createStudy(name: "hyperparameter_search", direction: .minimize)
+/// try study.optimize(nTrials: 100) { trial in
+///     let x = try trial.suggest("x", in: -5.0...5.0)
+///     return x * x
+/// }
+/// print("Best value: \(try study.bestValue)")
+/// ```
 public final class Study: @unchecked Sendable {
     private var raw: OpaquePointer?
     public let name: String
@@ -68,6 +85,22 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Creates a new trial from which hyperparameters can be suggested.
+    ///
+    /// This method is part of the manual ask-and-tell interface, serving as an alternative to ``optimize(nTrials:timeout:objective:)-3gyl5``
+    /// when you need fine-grained control over execution flow, custom distributed runners, or batch evaluations.
+    ///
+    /// - Returns: An active, non-copyable ``Trial`` object.
+    /// - Throws: ``SwiftunaError/handleExpired(_:)`` if the study handle is invalid,
+    ///           or ``SwiftunaError/searchSpaceExhausted(_:)`` if a discrete sampler (e.g. ``GridSampler``) has exhausted all parameter combinations.
+    ///
+    /// ### Example
+    /// ```swift
+    /// var trial = try study.ask()
+    /// let x = try trial.suggest("x", in: -10.0...10.0)
+    /// let loss = evaluate(x)
+    /// try study.tell(consuming: trial, value: loss)
+    /// ```
     public func ask() throws(SwiftunaError) -> Trial {
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is expired or invalid")
@@ -82,6 +115,13 @@ public final class Study: @unchecked Sendable {
         return Trial(raw: trialPtr, study: self)
     }
 
+    /// Finishes a trial created with ``ask()``, recording its objective value and final state.
+    ///
+    /// - Parameters:
+    ///   - trial: The active ``Trial`` to finish. This parameter is consumed to prevent reuse.
+    ///   - value: The final evaluated objective value.
+    ///   - state: The final state to assign to the trial (defaults to ``TrialState/complete``).
+    /// - Throws: ``SwiftunaError`` if recording the trial results to storage fails.
     public func tell(
         consuming trial: consuming Trial,
         value: Double,
@@ -90,6 +130,12 @@ public final class Study: @unchecked Sendable {
         try tell(consuming: trial, values: [value], state: state)
     }
 
+    /// Finishes a trial created with ``ask()`` without objective values (e.g. for failed or pruned trials).
+    ///
+    /// - Parameters:
+    ///   - trial: The active ``Trial`` to finish. This parameter is consumed to prevent reuse.
+    ///   - state: The final state to assign to the trial (e.g. ``TrialState/pruned`` or ``TrialState/fail``).
+    /// - Throws: ``SwiftunaError`` if recording the trial results to storage fails.
     public func tell(
         consuming trial: consuming Trial,
         state: TrialState
@@ -97,6 +143,13 @@ public final class Study: @unchecked Sendable {
         try tell(consuming: trial, values: [], state: state)
     }
 
+    /// Finishes a multi-objective trial created with ``ask()``, recording multiple objective values.
+    ///
+    /// - Parameters:
+    ///   - trial: The active ``Trial`` to finish. This parameter is consumed to prevent reuse.
+    ///   - values: The sequence of evaluated objective values matching the study's ``directions``.
+    ///   - state: The final state to assign to the trial (defaults to ``TrialState/complete``).
+    /// - Throws: ``SwiftunaError`` if recording the trial results to storage fails.
     public func tell(
         consuming trial: consuming Trial,
         values: [Double],
@@ -147,6 +200,13 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Optimizes a multi-objective function until `nTrials` or `timeout` is reached.
+    ///
+    /// - Parameters:
+    ///   - nTrials: The maximum number of trials to run. At least one of `nTrials` or `timeout` must be specified.
+    ///   - timeout: The maximum duration to allow optimization to proceed. Trials already running will complete gracefully.
+    ///   - objective: A closure taking an `inout Trial` and returning an array of objective values matching the study's ``directions``.
+    /// - Throws: ``SwiftunaError`` if optimization encounters an error or an invalid argument is provided.
     public func optimize(
         nTrials: Int? = nil,
         timeout: Duration? = nil,
@@ -205,6 +265,21 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Optimizes a single-objective function until `nTrials` or `timeout` is reached.
+    ///
+    /// - Parameters:
+    ///   - nTrials: The maximum number of trials to run. At least one of `nTrials` or `timeout` must be specified.
+    ///   - timeout: The maximum duration to allow optimization to proceed. Trials already running will complete gracefully.
+    ///   - objective: A closure taking an `inout Trial` and returning a single evaluated `Double`.
+    /// - Throws: ``SwiftunaError`` if optimization fails.
+    ///
+    /// ### Example
+    /// ```swift
+    /// try study.optimize(nTrials: 100) { trial in
+    ///     let x = try trial.suggest("x", in: -10.0...10.0)
+    ///     return x * x
+    /// }
+    /// ```
     public func optimize(
         nTrials: Int? = nil,
         timeout: Duration? = nil,
@@ -215,6 +290,14 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Concurrently optimizes an objective function using structured Swift concurrency (`TaskGroup`).
+    ///
+    /// - Parameters:
+    ///   - nTrials: The maximum number of trials to run. At least one of `nTrials` or `timeout` must be specified.
+    ///   - timeout: The maximum duration to allow optimization to proceed.
+    ///   - concurrency: Maximum number of concurrent tasks. Defaults to `ProcessInfo.processInfo.activeProcessorCount`.
+    ///   - objective: An async closure taking an `inout Trial` and returning a single evaluated `Double`.
+    /// - Throws: Any error thrown during concurrent evaluation.
     public func optimize(
         nTrials: Int? = nil,
         timeout: Duration? = nil,
@@ -301,6 +384,9 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// The best completed trial in a single-objective study, or `nil` if no completed trials exist.
+    ///
+    /// - Throws: ``SwiftunaError/unsupportedMultiObjective`` if called on a multi-objective study (use ``bestTrials`` instead).
     public var bestTrial: PersistedTrial? {
         get throws(SwiftunaError) {
             guard directions.count <= 1 else {
@@ -323,9 +409,9 @@ public final class Study: @unchecked Sendable {
         }
     }
 
-    /// Returns the best completed and feasible trial (where all constraints <= 0.0), or nil if no completed trial is feasible.
+    /// Returns the best completed and feasible trial (where all constraints <= 0.0), or `nil` if no completed trial is feasible.
     ///
-    /// Throws `SwiftunaError.unsupportedMultiObjective` if called on a multi-objective study (use `bestTrials` instead).
+    /// - Throws: ``SwiftunaError/unsupportedMultiObjective`` if called on a multi-objective study (use ``bestTrials`` instead).
     public var bestFeasibleTrial: PersistedTrial? {
         get throws(SwiftunaError) {
             guard directions.count <= 1 else {
@@ -335,6 +421,9 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// The Pareto frontier of non-dominated trials in a multi-objective study.
+    ///
+    /// - Throws: ``SwiftunaError`` if querying trials from storage fails.
     public var bestTrials: [PersistedTrial] {
         get throws(SwiftunaError) {
             guard let raw else {
@@ -353,6 +442,10 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// The best objective value achieved among completed trials in a single-objective study.
+    ///
+    /// - Throws: ``SwiftunaError/noTrialsFound`` if no completed trials are found in the study,
+    ///           or ``SwiftunaError/unsupportedMultiObjective`` if called on a multi-objective study.
     public var bestValue: Double {
         get throws(SwiftunaError) {
             guard let bt = try bestTrial, let val = bt.value else {
@@ -362,6 +455,10 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// The suggested parameter dictionary of the best completed trial in a single-objective study.
+    ///
+    /// - Throws: ``SwiftunaError/noTrialsFound`` if no completed trials are found in the study,
+    ///           or ``SwiftunaError/unsupportedMultiObjective`` if called on a multi-objective study.
     public var bestParams: [String: Double] {
         get throws(SwiftunaError) {
             guard let bt = try bestTrial else {
@@ -371,6 +468,9 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Returns all trials recorded in the study regardless of state.
+    ///
+    /// - Throws: ``SwiftunaError`` if reading from storage fails.
     public var trials: [PersistedTrial] {
         get throws(SwiftunaError) {
             try trials(where: Set(TrialState.allCases))

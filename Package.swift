@@ -46,7 +46,8 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/x-sheep/swift-property-based.git", from: "2.0.0")
+        .package(url: "https://github.com/x-sheep/swift-property-based.git", from: "2.0.0"),
+        .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.4.3")
     ],
     targets: [
         .target(
@@ -57,6 +58,7 @@ let package = Package(
         .target(
             name: "Swiftuna",
             dependencies: ["LibRustuna"],
+            resources: [.process("Swiftuna.docc")],
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),

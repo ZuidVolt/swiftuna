@@ -1,6 +1,24 @@
 import Foundation
 internal import LibRustuna
 
+/// An active trial representing a single evaluation step of an objective function.
+///
+/// `Trial` is passed to the objective closure in ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` or retrieved directly
+/// via ``Study/ask()``. It provides interfaces to suggest hyperparameters, report intermediate steps for early stopping,
+/// and record user-defined metadata or mathematical constraints.
+///
+/// > Important:
+/// > `Trial` is a non-copyable type (`~Copyable`). It must be completed either by returning from the optimization closure
+/// > or by passing it to ``Study/tell(consuming:value:state:)``. Double-use or use-after-consume is prevented at compile time.
+///
+/// ### Example
+/// ```swift
+/// study.optimize(nTrials: 50) { trial in
+///     let lr = try trial.suggest("lr", in: 1e-4...1e-1, log: true)
+///     let layers = try trial.suggest("layers", in: 1...5)
+///     return evaluateModel(layers: layers, lr: lr)
+/// }
+/// ```
 public struct Trial: ~Copyable {
     private var raw: OpaquePointer?
     public let number: Int
@@ -35,6 +53,24 @@ public struct Trial: ~Copyable {
         return h
     }
 
+    /// Suggests a floating-point parameter value from a continuous or discretized range.
+    ///
+    /// The value is sampled according to the study's active ``Sampler`` (e.g. ``TPESampler``, ``QMCSampler``).
+    ///
+    /// - Parameters:
+    ///   - name: A parameter name.
+    ///   - range: Closed range `[lowerBound, upperBound]` defining the endpoints of suggested values. Both bounds are included.
+    ///   - step: A discretization step. If specified, the parameter value is rounded to a multiple of this step.
+    ///   - log: If `true`, suggest values from a log scale. Incompatible with `step`.
+    /// - Returns: A suggested `Double` value.
+    /// - Throws: ``SwiftunaError/handleExpired(_:)`` if the trial handle is invalid,
+    ///           or ``SwiftunaError/invalidRange(_:)`` if the range bounds are non-finite or inverted.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let lr = try trial.suggest("learning_rate", in: 1e-5...1e-1, log: true)
+    /// let weightDecay = try trial.suggest("weight_decay", in: 0.0...0.1, step: 0.01)
+    /// ```
     public mutating func suggest(
         _ name: String,
         in range: ClosedRange<Double>,
@@ -71,6 +107,22 @@ public struct Trial: ~Copyable {
         return outVal
     }
 
+    /// Suggests an integer parameter value from a discrete range.
+    ///
+    /// - Parameters:
+    ///   - name: A parameter name.
+    ///   - range: Closed range `[lowerBound, upperBound]` defining the endpoints of suggested values. Both bounds are included.
+    ///   - step: A discretization step. Defaults to `1`.
+    ///   - log: If `true`, suggest values from a log scale. Incompatible with `step > 1`.
+    /// - Returns: A suggested `Int` value.
+    /// - Throws: ``SwiftunaError/handleExpired(_:)`` if the trial handle is invalid,
+    ///           or ``SwiftunaError/invalidRange(_:)`` if the integer range is empty.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let batchSize = try trial.suggest("batch_size", in: 16...128, step: 16)
+    /// let epochs = try trial.suggest("epochs", in: 5...50)
+    /// ```
     public mutating func suggest(
         _ name: String,
         in range: ClosedRange<Int>,
@@ -103,6 +155,19 @@ public struct Trial: ~Copyable {
         return Int(outVal)
     }
 
+    /// Suggests a categorical parameter value from a collection of candidates.
+    ///
+    /// - Parameters:
+    ///   - name: A parameter name.
+    ///   - choices: Parameter value candidates.
+    /// - Returns: A suggested value from `choices`.
+    /// - Throws: ``SwiftunaError/handleExpired(_:)`` if the trial handle is invalid,
+    ///           or ``SwiftunaError/emptyChoices(_:)`` if `choices` is empty.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let optimizer = try trial.suggest("optimizer", choices: ["adamw", "sgd", "adam"])
+    /// ```
     public mutating func suggest<T: Equatable>(
         _ name: String,
         choices: [T]
@@ -252,6 +317,13 @@ public struct Trial: ~Copyable {
     }
 
     /// Sets multiple constraints on the trial in batch.
+    ///
+    /// A trial is feasible when every constraint value is `<= 0.0`, and infeasible when any constraint is `> 0.0`.
+    /// Constraint values of `NaN` are rejected.
+    ///
+    /// - Parameters:
+    ///   - constraints: A dictionary mapping constraint names to their evaluated values.
+    /// - Throws: ``SwiftunaError/invalidArgument(_:)`` if any constraint value is NaN.
     public mutating func setConstraints(
         _ constraints: [String: Double]
     ) throws(SwiftunaError) {
@@ -275,12 +347,25 @@ public struct Trial: ~Copyable {
 
     // MARK: - Intermediate Reporting & Pruning
 
-    /// Reports an intermediate objective value for the given step.
+    /// Reports an intermediate objective value for the given step (e.g. epoch number).
+    ///
+    /// Intermediate values are utilized by pruners (such as ``MedianPruner``, ``SuccessiveHalvingPruner``,
+    /// or ``HyperbandPruner``) to terminate unpromising trials early.
     ///
     /// - Parameters:
-    ///   - value: The intermediate evaluation value (e.g. loss, accuracy, or reward).
-    ///   - step: The step index (e.g. epoch number).
-    ///   - pruneIfWorse: If true, immediately evaluates the study pruner and throws `SwiftunaError.trialPruned` if pruning is recommended.
+    ///   - value: The intermediate evaluation value (e.g. loss, validation error, or reward).
+    ///   - step: The step index (e.g. epoch number or iteration).
+    ///   - pruneIfWorse: If `true`, immediately evaluates the study pruner and throws ``SwiftunaError/trialPruned(reason:)``
+    ///                   if early stopping is recommended.
+    /// - Throws: ``SwiftunaError/trialPruned(reason:)`` when `pruneIfWorse` is `true` and pruning is triggered.
+    ///
+    /// ### Example
+    /// ```swift
+    /// for epoch in 1...50 {
+    ///     let loss = evaluateEpoch(epoch)
+    ///     try trial.report(loss, step: epoch, pruneIfWorse: true)
+    /// }
+    /// ```
     public mutating func report(
         _ value: Double,
         step: Int,
