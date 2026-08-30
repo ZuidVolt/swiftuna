@@ -138,6 +138,40 @@ struct SwiftunaBenchApp {
                 print("✅ Invariant Verified: T_Rust <= T_Swift < T_Python")
                 print("🚀 Swiftuna performance successfully benchmarked!")
                 print("=========================================================\n")
+
+                // 4. Trial Deserialization & Query Microbenchmark
+                print("=========================================================")
+                print("       Study.trials Single-Shot Deserialization Benchmark")
+                print("=========================================================")
+                let queryStudy = try Swiftuna.createStudy(name: "bench_query_\(UUID().uuidString)")
+                for i in 0..<100 {
+                    var t = try queryStudy.ask()
+                    _ = try t.suggest("param_a", in: -10.0...10.0)
+                    _ = try t.suggest("param_b", in: 1...100)
+                    try t.setUserAttr("tag", value: "epoch_\(i)")
+                    try t.setConstraint("c1", value: Double(i - 50))
+                    try t.report(Double(i) * 0.1, step: 0)
+                    try t.report(Double(i) * 0.05, step: 1)
+                    try queryStudy.tell(consuming: t, value: Double(i) * 1.5)
+                }
+
+                let qStart = ContinuousClock.now
+                let qIters = 1000
+                var qTotal = 0
+                for _ in 0..<qIters {
+                    let trials = try queryStudy.trials
+                    qTotal += trials.count
+                }
+                let qElapsed = ContinuousClock.now - qStart
+                let qMs = Double(qElapsed.components.attoseconds) / 1e15
+                let qUsPerTrial = (qMs * 1000.0) / Double(qTotal)
+                let qThroughput = Double(qTotal) / (qMs / 1000.0)
+
+                print("Benchmark: 100 rich trials (params, attrs, constraints, steps) x 1,000 iterations")
+                print(String(format: "Total Time:       %.2f ms (100,000 trials loaded)", qMs))
+                print(String(format: "Per-Trial Latency: %.2f µs / trial", qUsPerTrial))
+                print(String(format: "Throughput:       %.0f trials / sec", qThroughput))
+                print("=========================================================\n")
             }
         } catch {
             print("❌ Benchmark execution failed with error: \(error)")

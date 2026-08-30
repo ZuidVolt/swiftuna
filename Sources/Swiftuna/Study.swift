@@ -90,7 +90,7 @@ public final class Study: @unchecked Sendable {
 
         let status: Int32 = withOptionalCString(intermediateJsonStr) { cIntermediate in
             if values.isEmpty {
-                return rustuna_study_tell_multi_with_intermediate(
+                return rustuna_study_tell_multi(
                     raw,
                     UInt32(trialNumber),
                     state.rawValue,
@@ -100,7 +100,7 @@ public final class Study: @unchecked Sendable {
                 )
             } else {
                 return values.withUnsafeBufferPointer { buf in
-                    rustuna_study_tell_multi_with_intermediate(
+                    rustuna_study_tell_multi(
                         raw,
                         UInt32(trialNumber),
                         state.rawValue,
@@ -407,57 +407,50 @@ public final class Study: @unchecked Sendable {
         return results
     }
 
+    private struct PersistedTrialJSONPayload: Decodable {
+        let number: Int
+        let state: Int32
+        let values: [Double]
+        let params: [String: Double]
+        let user_attrs: [String: String]
+        let constraints: [String: Double]
+        let intermediate_values: [String: Double]
+        let datetime_start: String?
+        let datetime_complete: String?
+    }
+
     private func parsePersistedTrial(_ trialPtr: OpaquePointer) -> PersistedTrial {
-        let num = Int(rustuna_persisted_trial_get_number(trialPtr))
-        let stateRaw = rustuna_persisted_trial_get_state(trialPtr)
-        let state = TrialState(rawValue: stateRaw) ?? .fail
+        var cJson: UnsafeMutablePointer<CChar>?
+        guard rustuna_persisted_trial_get_json(trialPtr, &cJson) == 0, let cJson else {
+            return PersistedTrial(number: 0, state: .fail, value: nil, values: [], params: [:], userAttrs: [:])
+        }
+        defer { rustuna_string_free(cJson) }
 
-        var valsPtr: UnsafeMutablePointer<Double>?
-        var valsCount: Int = 0
-        var values: [Double] = []
-        if rustuna_persisted_trial_get_values(trialPtr, &valsPtr, &valsCount) {
-            if let valsPtr, valsCount > 0 {
-                values = Array(UnsafeBufferPointer(start: valsPtr, count: valsCount))
-                rustuna_values_buffer_free(valsPtr, valsCount)
-            }
+        guard let data = String(cString: cJson).data(using: .utf8),
+            let payload = try? JSONDecoder().decode(PersistedTrialJSONPayload.self, from: data)
+        else {
+            return PersistedTrial(number: 0, state: .fail, value: nil, values: [], params: [:], userAttrs: [:])
         }
 
-        let params: [String: Double] = decodeJsonMap { rustuna_persisted_trial_get_params_json(trialPtr, $0) }
-        let userAttrs: [String: String] = decodeJsonMap { rustuna_persisted_trial_get_user_attrs_json(trialPtr, $0) }
-        let constraints: [String: Double] = decodeJsonMap { rustuna_persisted_trial_get_constraints_json(trialPtr, $0) }
-
-        let intermediateMap: [String: Double] = decodeJsonMap {
-            rustuna_persisted_trial_get_intermediate_values_json(trialPtr, $0)
-        }
-        let intermediateValues = Dictionary(uniqueKeysWithValues: intermediateMap.compactMap { k, v in
-            Int(k).map { ($0, v) }
-        })
-
-        var startStrPtr: UnsafeMutablePointer<CChar>?
-        var datetimeStart: Date? = nil
-        if rustuna_persisted_trial_get_datetime_start(trialPtr, &startStrPtr) == 0, let startStrPtr {
-            datetimeStart = parseOptunaDate(String(cString: startStrPtr))
-            rustuna_string_free(startStrPtr)
-        }
-
-        var completeStrPtr: UnsafeMutablePointer<CChar>?
-        var datetimeComplete: Date? = nil
-        if rustuna_persisted_trial_get_datetime_complete(trialPtr, &completeStrPtr) == 0, let completeStrPtr {
-            datetimeComplete = parseOptunaDate(String(cString: completeStrPtr))
-            rustuna_string_free(completeStrPtr)
-        }
+        let intermediateValues = Dictionary(
+            uniqueKeysWithValues: payload.intermediate_values.compactMap { k, v in
+                Int(k).map { ($0, v) }
+            })
+        let state = TrialState(rawValue: payload.state) ?? .fail
+        let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
+        let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
 
         return PersistedTrial(
-            number: num,
+            number: payload.number,
             state: state,
-            value: values.first,
-            values: values,
-            params: params,
-            userAttrs: userAttrs,
-            constraints: constraints,
+            value: payload.values.first,
+            values: payload.values,
+            params: payload.params,
+            userAttrs: payload.user_attrs,
+            constraints: payload.constraints,
             intermediateValues: intermediateValues,
-            datetimeStart: datetimeStart,
-            datetimeComplete: datetimeComplete
+            datetimeStart: dtStart,
+            datetimeComplete: dtComplete
         )
     }
 
@@ -471,17 +464,6 @@ public final class Study: @unchecked Sendable {
             isoStr.append("Z")
         }
         return try? Date(isoStr, strategy: .iso8601)
-    }
-
-    @inline(always)
-    private func decodeJsonMap<T: Decodable>(
-        _ fetch: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
-    ) -> [String: T] {
-        var cStrPtr: UnsafeMutablePointer<CChar>?
-        guard fetch(&cStrPtr) == 0, let cStrPtr else { return [:] }
-        defer { rustuna_string_free(cStrPtr) }
-        guard let data = String(cString: cStrPtr).data(using: .utf8) else { return [:] }
-        return (try? JSONDecoder().decode([String: T].self, from: data)) ?? [:]
     }
 
     // MARK: - Study User Attributes & Analytics

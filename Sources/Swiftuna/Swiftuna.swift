@@ -30,9 +30,8 @@ public func createStudy(
 ) throws(SwiftunaError) -> Study {
     try createStudy(
         name: name,
-        direction: direction,
+        directions: [direction],
         storage: storage,
-        sampler: TPESampler(),
         pruner: pruner,
         loadIfExists: loadIfExists
     )

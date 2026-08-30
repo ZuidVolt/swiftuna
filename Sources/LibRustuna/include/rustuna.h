@@ -43,14 +43,8 @@ int32_t rustuna_study_get_param_importances(RustunaStudy* study, bool normalize,
 void rustuna_study_free(RustunaStudy* study);
 
 int32_t rustuna_study_ask(RustunaStudy* study, RustunaTrial** out_trial);
-int32_t rustuna_study_tell(RustunaStudy* study, uint32_t trial_number,
-                           int32_t state, // 0 = Running, 1 = Complete, 2 = Pruned, 3 = Waiting, 4 = Fail
-                           double value);
 int32_t rustuna_study_tell_multi(RustunaStudy* study, uint32_t trial_number, int32_t state, const double* values,
-                                 size_t values_len);
-int32_t rustuna_study_tell_multi_with_intermediate(RustunaStudy* study, uint32_t trial_number, int32_t state,
-                                                   const double* values, size_t values_len,
-                                                   const char* intermediate_json);
+                                 size_t values_len, const char* intermediate_json);
 int32_t rustuna_study_add_trial_json(RustunaStudy* study, const char* trial_json);
 
 int32_t rustuna_study_get_best_trial(RustunaStudy* study, RustunaPersistedTrial** out_trial);
@@ -82,17 +76,7 @@ int32_t rustuna_trial_set_constraint(RustunaTrial* trial, const char* key, doubl
 void rustuna_trial_free(RustunaTrial* trial);
 
 // PersistedTrial APIs (Frozen immutable trial)
-uint32_t rustuna_persisted_trial_get_number(const RustunaPersistedTrial* trial);
-int32_t rustuna_persisted_trial_get_state(const RustunaPersistedTrial* trial);
-bool rustuna_persisted_trial_get_value(const RustunaPersistedTrial* trial, double* out_val);
-bool rustuna_persisted_trial_get_values(const RustunaPersistedTrial* trial, double** out_vals, size_t* out_len);
-void rustuna_values_buffer_free(double* vals, size_t len);
-int32_t rustuna_persisted_trial_get_params_json(const RustunaPersistedTrial* trial, char** out_json);
-int32_t rustuna_persisted_trial_get_user_attrs_json(const RustunaPersistedTrial* trial, char** out_json);
-int32_t rustuna_persisted_trial_get_constraints_json(const RustunaPersistedTrial* trial, char** out_json);
-int32_t rustuna_persisted_trial_get_intermediate_values_json(RustunaPersistedTrial* trial, char** out_json);
-int32_t rustuna_persisted_trial_get_datetime_start(RustunaPersistedTrial* trial, char** out_str);
-int32_t rustuna_persisted_trial_get_datetime_complete(RustunaPersistedTrial* trial, char** out_str);
+int32_t rustuna_persisted_trial_get_json(const RustunaPersistedTrial* trial, char** out_json);
 void rustuna_persisted_trial_free(RustunaPersistedTrial* trial);
 
 #ifdef __cplusplus

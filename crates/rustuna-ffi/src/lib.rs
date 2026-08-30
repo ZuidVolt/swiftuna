@@ -619,35 +619,7 @@ pub extern "C" fn rustuna_study_ask(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rustuna_study_tell(
-    study: *mut RustunaStudy,
-    trial_number: u32,
-    state: i32,
-    value: f64,
-) -> i32 {
-    rustuna_study_tell_multi(study, trial_number, state, &value, 1)
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn rustuna_study_tell_multi(
-    study: *mut RustunaStudy,
-    trial_number: u32,
-    state: i32,
-    values: *const f64,
-    values_len: usize,
-) -> i32 {
-    rustuna_study_tell_multi_with_intermediate(
-        study,
-        trial_number,
-        state,
-        values,
-        values_len,
-        std::ptr::null(),
-    )
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_study_tell_multi_with_intermediate(
     study: *mut RustunaStudy,
     trial_number: u32,
     state: i32,
@@ -1046,92 +1018,21 @@ pub extern "C" fn rustuna_trials_buffer_free(trials: *mut *mut RustunaPersistedT
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_number(trial: *const RustunaPersistedTrial) -> u32 {
-    if trial.is_null() {
-        return 0;
-    }
-    unsafe { (*trial).inner.number }
+#[derive(serde::Serialize)]
+struct PersistedTrialPayload<'a> {
+    number: u32,
+    state: i32,
+    values: &'a [f64],
+    params: &'a HashMap<String, f64>,
+    user_attrs: HashMap<String, String>,
+    constraints: HashMap<String, f64>,
+    intermediate_values: HashMap<String, f64>,
+    datetime_start: &'a Option<String>,
+    datetime_complete: &'a Option<String>,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_state(trial: *const RustunaPersistedTrial) -> i32 {
-    if trial.is_null() {
-        return -1;
-    }
-    match unsafe { &(*trial).inner.state_values } {
-        TrialStateValues::Running => 0,
-        TrialStateValues::Complete(_) => 1,
-        TrialStateValues::Pruned => 2,
-        TrialStateValues::Waiting => 3,
-        TrialStateValues::Fail => 4,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_value(
-    trial: *const RustunaPersistedTrial,
-    out_val: *mut f64,
-) -> bool {
-    if trial.is_null() || out_val.is_null() {
-        return false;
-    }
-    match unsafe { &(*trial).inner.state_values } {
-        TrialStateValues::Complete(vals) => {
-            if let Some(&first) = vals.first() {
-                unsafe { *out_val = first };
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_values(
-    trial: *const RustunaPersistedTrial,
-    out_vals: *mut *mut f64,
-    out_len: *mut usize,
-) -> bool {
-    if trial.is_null() || out_vals.is_null() || out_len.is_null() {
-        return false;
-    }
-    match unsafe { &(*trial).inner.state_values } {
-        TrialStateValues::Complete(vals) => {
-            let mut cloned = vals.clone();
-            cloned.shrink_to_fit();
-            let len = cloned.len();
-            let ptr = cloned.as_mut_ptr();
-            std::mem::forget(cloned);
-            unsafe {
-                *out_vals = ptr;
-                *out_len = len;
-            }
-            true
-        }
-        _ => {
-            unsafe {
-                *out_vals = std::ptr::null_mut();
-                *out_len = 0;
-            }
-            false
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_values_buffer_free(vals: *mut f64, len: usize) {
-    if !vals.is_null() && len > 0 {
-        unsafe {
-            drop(Vec::from_raw_parts(vals, len, len));
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_params_json(
+pub extern "C" fn rustuna_persisted_trial_get_json(
     trial: *const RustunaPersistedTrial,
     out_json: *mut *mut c_char,
 ) -> i32 {
@@ -1141,51 +1042,45 @@ pub extern "C" fn rustuna_persisted_trial_get_params_json(
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
         let t = unsafe { &*trial };
-        let mut map = HashMap::new();
-        for (k, v) in &t.inner.internal_params {
-            map.insert(k.clone(), *v);
-        }
-        match serde_json::to_string(&map) {
-            Ok(json_str) => {
-                let c_str = CString::new(json_str).unwrap_or_default();
-                unsafe {
-                    *out_json = c_str.into_raw();
-                }
-                0
-            }
-            Err(e) => {
-                set_last_error(19, format!("Serialization error: {e:?}"));
-                19
-            }
-        }
-    }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_params_json: {e:?}"));
-            -99
-        }
-    }
-}
+        let state = match &t.inner.state_values {
+            TrialStateValues::Running => 0,
+            TrialStateValues::Complete(_) => 1,
+            TrialStateValues::Pruned => 2,
+            TrialStateValues::Waiting => 3,
+            TrialStateValues::Fail => 4,
+        };
+        let values: &[f64] = match &t.inner.state_values {
+            TrialStateValues::Complete(vals) => vals.as_slice(),
+            _ => &[],
+        };
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_user_attrs_json(
-    trial: *const RustunaPersistedTrial,
-    out_json: *mut *mut c_char,
-) -> i32 {
-    if trial.is_null() || out_json.is_null() {
-        set_last_error(-1, "trial or out_json pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let t = unsafe { &*trial };
-        let mut map = HashMap::new();
+        let mut user_attrs = HashMap::new();
         for (k, v) in &t.inner.attrs {
             if let rustuna_core::attr::AttrKey::User(s) = k {
-                map.insert(s.as_str().to_string(), v.clone());
+                user_attrs.insert(s.as_str().to_string(), v.clone());
             }
         }
-        match serde_json::to_string(&map) {
+
+        let constraints = t.inner.constraints().unwrap_or_default();
+
+        let mut intermediate_values = HashMap::new();
+        for (k, v) in &t.inner.intermediate_values {
+            intermediate_values.insert(k.to_string(), *v);
+        }
+
+        let payload = PersistedTrialPayload {
+            number: t.inner.number,
+            state,
+            values,
+            params: &t.inner.internal_params,
+            user_attrs,
+            constraints,
+            intermediate_values,
+            datetime_start: &t.inner.datetime_start,
+            datetime_complete: &t.inner.datetime_complete,
+        };
+
+        match serde_json::to_string(&payload) {
             Ok(json_str) => {
                 let c_str = CString::new(json_str).unwrap_or_default();
                 unsafe {
@@ -1202,124 +1097,10 @@ pub extern "C" fn rustuna_persisted_trial_get_user_attrs_json(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_user_attrs_json: {e:?}"));
+            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_json: {e:?}"));
             -99
         }
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_constraints_json(
-    trial: *const RustunaPersistedTrial,
-    out_json: *mut *mut c_char,
-) -> i32 {
-    if trial.is_null() || out_json.is_null() {
-        set_last_error(-1, "trial or out_json pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let t = unsafe { &*trial };
-        match t.inner.constraints() {
-            Ok(map) => match serde_json::to_string(&map) {
-                Ok(json_str) => {
-                    let c_str = CString::new(json_str).unwrap_or_default();
-                    unsafe {
-                        *out_json = c_str.into_raw();
-                    }
-                    0
-                }
-                Err(e) => {
-                    set_last_error(19, format!("Serialization error: {e:?}"));
-                    19
-                }
-            },
-            Err(e) => set_rustuna_error(&e),
-        }
-    }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_constraints_json: {e:?}"));
-            -99
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_intermediate_values_json(
-    trial: *mut RustunaPersistedTrial,
-    out_json: *mut *mut c_char,
-) -> i32 {
-    if trial.is_null() || out_json.is_null() {
-        set_last_error(-1, "trial or out_json pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let t = unsafe { &*trial };
-        let json_str = match serde_json::to_string(&t.inner.intermediate_values) {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(19, format!("Failed to serialize intermediate values: {e:?}"));
-                return 19;
-            }
-        };
-        let c_str = CString::new(json_str).unwrap_or_default();
-        unsafe {
-            *out_json = c_str.into_raw();
-        }
-        0
-    }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_intermediate_values_json: {e:?}"));
-            -99
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_datetime_start(
-    trial: *mut RustunaPersistedTrial,
-    out_str: *mut *mut c_char,
-) -> i32 {
-    if trial.is_null() || out_str.is_null() {
-        return -1;
-    }
-    let t = unsafe { &*trial };
-    if let Some(ref s) = t.inner.datetime_start {
-        let c_str = CString::new(s.as_str()).unwrap_or_default();
-        unsafe {
-            *out_str = c_str.into_raw();
-        }
-    } else {
-        unsafe {
-            *out_str = std::ptr::null_mut();
-        }
-    }
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_persisted_trial_get_datetime_complete(
-    trial: *mut RustunaPersistedTrial,
-    out_str: *mut *mut c_char,
-) -> i32 {
-    if trial.is_null() || out_str.is_null() {
-        return -1;
-    }
-    let t = unsafe { &*trial };
-    if let Some(ref s) = t.inner.datetime_complete {
-        let c_str = CString::new(s.as_str()).unwrap_or_default();
-        unsafe {
-            *out_str = c_str.into_raw();
-        }
-    } else {
-        unsafe {
-            *out_str = std::ptr::null_mut();
-        }
-    }
-    0
 }
 
 #[unsafe(no_mangle)]

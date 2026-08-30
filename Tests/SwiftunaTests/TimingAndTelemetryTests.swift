@@ -4,33 +4,65 @@ import Testing
 
 final class MockSpan: TelemetrySpan, @unchecked Sendable {
     let name: String
-    var attributes: [String: String]
-    var isEnded: Bool = false
-    var status: SpanStatus?
+    private let lock = NSLock()
+    private var _attributes: [String: String]
+    private var _isEnded: Bool = false
+    private var _status: SpanStatus?
+
+    var attributes: [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _attributes
+    }
+
+    var isEnded: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isEnded
+    }
+
+    var status: SpanStatus? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _status
+    }
 
     init(name: String, attributes: [String: String]) {
         self.name = name
-        self.attributes = attributes
+        self._attributes = attributes
     }
 
     func setAttribute(_ key: String, value: String) {
-        attributes[key] = value
+        lock.lock()
+        _attributes[key] = value
+        lock.unlock()
     }
 
     func recordEvent(name: String, attributes: [String: String]) {}
 
     func end(status: SpanStatus) {
-        self.isEnded = true
-        self.status = status
+        lock.lock()
+        _isEnded = true
+        _status = status
+        lock.unlock()
     }
 }
 
 final class MockTracer: TelemetryTracer, @unchecked Sendable {
-    var spans: [MockSpan] = []
+    private let lock = NSLock()
+    private var _spans: [MockSpan] = []
+
+    var spans: [MockSpan] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _spans
+    }
 
     func startSpan(name: String, attributes: [String: String]) -> any TelemetrySpan {
         let span = MockSpan(name: name, attributes: attributes)
-        spans.append(span)
+        lock.lock()
+        _spans.append(span)
+        lock.unlock()
         return span
     }
 }
