@@ -34,7 +34,7 @@ public func createStudy(
     )
 }
 
-@inline(__always)
+@inline(always)
 internal func withOptionalCString<R>(
     _ string: String?,
     _ body: (UnsafePointer<CChar>?) throws -> R
@@ -154,4 +154,3 @@ public func loadStudy(
 ) throws(SwiftunaError) -> Study {
     try loadStudy(name: name, storage: storage, sampler: TPESampler())
 }
-
