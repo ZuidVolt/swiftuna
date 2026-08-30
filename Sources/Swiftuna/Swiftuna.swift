@@ -151,6 +151,23 @@ public func createStudy(
 }
 
 /// Loads an existing study from persistent storage with custom sampler and pruner.
+///
+/// - Parameters:
+///   - name: Unique identifier of the study to load.
+///   - storage: Persistent storage backend where the study is saved (e.g. `.sqlite(path:)` or `.journal(path:)`).
+///   - sampler: Custom parameter sampling algorithm (e.g. ``TPESampler``, ``QMCSampler``).
+///   - pruner: Custom early stopping pruner. Defaults to ``NopPruner``.
+/// - Returns: An active ``Study`` connected to the persistent storage.
+/// - Throws: ``SwiftunaError/studyNotFound(_:)`` if no study with `name` exists in `storage`.
+///
+/// ### Example
+/// ```swift
+/// let study = try Swiftuna.loadStudy(
+///     name: "production_model",
+///     storage: .sqlite(path: "experiments.db"),
+///     sampler: TPESampler()
+/// )
+/// ```
 public func loadStudy<S: Sampler>(
     name: String,
     storage: StorageBackend,
@@ -185,6 +202,13 @@ public func loadStudy<S: Sampler>(
 }
 
 /// Loads an existing study from persistent storage with default TPESampler and optional pruner.
+///
+/// - Parameters:
+///   - name: Unique identifier of the study to load.
+///   - storage: Persistent storage backend where the study is saved.
+///   - pruner: Custom early stopping pruner. Defaults to ``NopPruner``.
+/// - Returns: An active ``Study`` connected to the persistent storage.
+/// - Throws: ``SwiftunaError/studyNotFound(_:)`` if no study with `name` exists in `storage`.
 public func loadStudy(
     name: String,
     storage: StorageBackend,
@@ -193,7 +217,29 @@ public func loadStudy(
     try loadStudy(name: name, storage: storage, sampler: TPESampler(), pruner: pruner)
 }
 
-/// Constructs an already-evaluated historical trial that can be injected into a study via `study.addTrial`.
+/// Constructs an already-evaluated historical trial that can be injected into a study via ``Study/addTrial(_:)``.
+///
+/// - Parameters:
+///   - state: Lifecycle state of the trial (defaults to ``TrialState/complete``).
+///   - value: Objective value for single-objective trials.
+///   - values: Objective values array for multi-objective trials.
+///   - params: Parameter dictionary of evaluated hyperparameters.
+///   - userAttrs: Custom user metadata dictionary.
+///   - constraints: Mathematical constraint values (<= 0.0 indicates feasible).
+///   - intermediateValues: Step-by-step intermediate progression values.
+///   - datetimeStart: Timestamp when trial execution began.
+///   - datetimeComplete: Timestamp when trial execution finished.
+/// - Returns: A configured ``PersistedTrial`` ready for injection.
+///
+/// ### Example
+/// ```swift
+/// let trial = Swiftuna.createTrial(
+///     state: .complete,
+///     value: 0.15,
+///     params: ["learning_rate": 0.001]
+/// )
+/// try study.addTrial(trial)
+/// ```
 public func createTrial(
     state: TrialState = .complete,
     value: Double? = nil,
@@ -221,7 +267,14 @@ public func createTrial(
 
 // MARK: - Study Lifecycle & Storage Operations
 
-/// Copies a study to a destination storage backend, replicating all trials, directions, and attributes.
+/// Copies an active study to a destination storage backend, replicating all trials, directions, and attributes.
+///
+/// - Parameters:
+///   - study: Source study instance to replicate.
+///   - destination: Target storage backend.
+///   - newName: Optional target study name. If `nil`, the source name is retained.
+/// - Returns: An active ``Study`` instance connected to the copied target.
+/// - Throws: ``SwiftunaError/duplicatedStudy(_:)`` if a study with `newName` already exists in `destination`.
 @discardableResult
 public func copyStudy(
     from study: Study,
@@ -231,7 +284,14 @@ public func copyStudy(
     try study.copy(to: destination, as: newName)
 }
 
-/// Copies a study directly between two storage backends without an active Study instance.
+/// Copies a study directly between two storage backends without instantiating an active Study.
+///
+/// - Parameters:
+///   - fromName: Name of the source study.
+///   - fromStorage: Source storage backend.
+///   - toName: Target study name. If `nil`, retains `fromName`.
+///   - toStorage: Destination storage backend.
+/// - Throws: ``SwiftunaError`` if copying fails.
 public func copyStudy(
     fromName: String,
     fromStorage: StorageBackend,
@@ -262,12 +322,21 @@ public func copyStudy(
     }
 }
 
-/// Returns all studies stored in the specified storage backend.
+/// Returns summary records for all studies present in the specified storage backend.
+///
+/// - Parameter storage: Storage backend to inspect.
+/// - Returns: An array of ``StudySummary`` structures containing study identifiers and names.
+/// - Throws: ``SwiftunaError`` if querying storage fails.
 public func getStudies(in storage: StorageBackend) throws(SwiftunaError) -> [StudySummary] {
     try storage.studies()
 }
 
-/// Deletes a study from the specified storage backend by name.
+/// Permanently deletes a study and all associated trials and attributes from storage.
+///
+/// - Parameters:
+///   - name: Identifier of the study to remove.
+///   - storage: Storage backend hosting the study.
+/// - Throws: ``SwiftunaError/studyNotFound(_:)`` if the study does not exist.
 public func deleteStudy(named name: String, in storage: StorageBackend) throws(SwiftunaError) {
     try storage.deleteStudy(named: name)
 }

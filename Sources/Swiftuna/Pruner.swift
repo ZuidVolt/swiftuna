@@ -25,15 +25,36 @@ public struct NopPruner: Pruner {
     }
 }
 
-/// Pruner that prunes if the trial's best intermediate value is worse than the median (50th percentile)
-/// of intermediate values of previous trials at the same step.
+/// Pruner using the median stopping rule.
+///
+/// Prunes an active trial if its intermediate value at a step is worse than the median (50th percentile)
+/// of intermediate values reported by previous completed or pruned trials at the same step.
+///
+/// Under the hood, `MedianPruner` delegates to ``PercentilePruner`` with `percentile: 50.0`.
+///
+/// ### Example
+/// ```swift
+/// let pruner = MedianPruner(nStartupTrials: 5, nWarmupSteps: 10, intervalSteps: 2)
+/// let study = try Swiftuna.createStudy(pruner: pruner)
+/// ```
 public struct MedianPruner: Pruner {
     public let underlying: PercentilePruner
 
+    /// Number of initial trials executed without pruning to establish an initial performance baseline.
     public var nStartupTrials: Int { underlying.nStartupTrials }
+
+    /// Number of initial steps within each trial before pruning evaluation begins.
     public var nWarmupSteps: Int { underlying.nWarmupSteps }
+
+    /// Step interval at which pruning decisions are evaluated.
     public var intervalSteps: Int { underlying.intervalSteps }
 
+    /// Initializes a Median pruner.
+    ///
+    /// - Parameters:
+    ///   - nStartupTrials: Trials run before pruning starts. Defaults to `5`.
+    ///   - nWarmupSteps: Steps within a trial before pruning starts. Defaults to `0`.
+    ///   - intervalSteps: Step frequency for evaluating pruning. Defaults to `1`.
     public init(
         nStartupTrials: Int = 5,
         nWarmupSteps: Int = 0,
@@ -63,13 +84,36 @@ public struct MedianPruner: Pruner {
     }
 }
 
-/// Pruner that prunes if the trial's intermediate value is worse than the given percentile of previous trials.
+/// Pruner to keep trials whose intermediate values fall in the top percentile of historical trials.
+///
+/// Prunes an active trial if its intermediate value is worse than the given `percentile` among previous
+/// completed and pruned trials at the same step.
+///
+/// ### Example
+/// ```swift
+/// // Keep only trials performing in the top 25% (prune bottom 75%)
+/// let pruner = PercentilePruner(percentile: 25.0, nStartupTrials: 5)
+/// ```
 public struct PercentilePruner: Pruner {
+    /// Target percentile threshold between 0.0 and 100.0.
     public let percentile: Double
+
+    /// Number of initial trials run before pruning decisions take effect.
     public let nStartupTrials: Int
+
+    /// Number of initial steps within each trial before pruning evaluation begins.
     public let nWarmupSteps: Int
+
+    /// Step interval at which pruning decisions are evaluated.
     public let intervalSteps: Int
 
+    /// Initializes a Percentile pruner.
+    ///
+    /// - Parameters:
+    ///   - percentile: Percentile threshold between 0.0 and 100.0 (e.g. `25.0` for top 25%).
+    ///   - nStartupTrials: Trials run before pruning starts. Defaults to `5`.
+    ///   - nWarmupSteps: Steps within each trial before pruning starts. Defaults to `0`.
+    ///   - intervalSteps: Step frequency for evaluating pruning. Defaults to `1`.
     public init(
         percentile: Double = 50.0,
         nStartupTrials: Int = 5,
@@ -115,11 +159,27 @@ public struct PercentilePruner: Pruner {
     }
 }
 
-/// Pruner that prunes immediately if the intermediate value exceeds absolute predefined thresholds.
+/// Pruner that prunes immediately if an intermediate value crosses absolute predefined thresholds.
+///
+/// Evaluates whether the reported value exceeds `upper` or drops below `lower`. Also prunes `NaN` evaluations.
+///
+/// ### Example
+/// ```swift
+/// // Prune immediately if loss exceeds 100.0 or drops below 0.0
+/// let pruner = ThresholdPruner(lower: 0.0, upper: 100.0)
+/// ```
 public struct ThresholdPruner: Pruner {
+    /// Lower bound threshold. If an intermediate value is `< lower`, the trial is pruned.
     public let lower: Double?
+
+    /// Upper bound threshold. If an intermediate value is `> upper`, the trial is pruned.
     public let upper: Double?
 
+    /// Initializes a Threshold pruner.
+    ///
+    /// - Parameters:
+    ///   - lower: Optional lower bound cutoff.
+    ///   - upper: Optional upper bound cutoff.
     public init(lower: Double? = nil, upper: Double? = nil) {
         self.lower = lower
         self.upper = upper
@@ -146,15 +206,41 @@ public struct ThresholdPruner: Pruner {
 
 /// Asynchronous Successive Halving Algorithm (ASHA) pruner.
 ///
-/// Allocates resources across rungs scaling by `reductionFactor` (η). At each rung,
-/// only the top 1 / η fraction of trials are promoted to continue to the next rung.
+/// Allocates resources across geometric rungs scaling by `reductionFactor` ($\eta$). At each rung,
+/// only the top $1 / \eta$ fraction of trials are promoted to continue evaluation to the next rung.
+///
+/// Unlike synchronous successive halving, ASHA evaluates trials asynchronously without blocking workers,
+/// making it ideal for distributed or concurrent optimization runs.
+///
+/// ### Example
+/// ```swift
+/// let pruner = SuccessiveHalvingPruner(minResource: 1, reductionFactor: 4)
+/// let study = try Swiftuna.createStudy(pruner: pruner)
+/// ```
 public struct SuccessiveHalvingPruner: Pruner {
+    /// Minimum resource allocation (e.g. initial epoch count or step) before trials encounter the first rung.
     public let minResource: Int
+
+    /// Reduction factor $\eta$ governing the promotion rate ($1 / \eta$) and rung progression spacing.
     public let reductionFactor: Int
+
+    /// Initial early stopping rate exponent determining the first rung index.
     public let minEarlyStoppingRate: Int
+
+    /// Minimum number of trials that must reach a rung before pruning evaluations take effect.
     public let bootstrapCount: Int
+
+    /// Optional predicate filtering which trials belong to this evaluation arm (used by ``HyperbandPruner``).
     public let trialFilter: (@Sendable (PersistedTrial) -> Bool)?
 
+    /// Initializes an Asynchronous Successive Halving (ASHA) pruner.
+    ///
+    /// - Parameters:
+    ///   - minResource: Minimum resource step before the first rung. Defaults to `1`.
+    ///   - reductionFactor: Promotion divisor $\eta$. Defaults to `4`.
+    ///   - minEarlyStoppingRate: Initial rung rate exponent. Defaults to `0`.
+    ///   - bootstrapCount: Trials needed at a rung before pruning begins. Defaults to `0`.
+    ///   - trialFilter: Optional closure to isolate trials by bracket.
     public init(
         minResource: Int = 1,
         reductionFactor: Int = 4,
@@ -169,10 +255,11 @@ public struct SuccessiveHalvingPruner: Pruner {
         self.trialFilter = trialFilter
     }
 
-    /// Computes the rung step for index k.
+    /// Computes the step index for the given rung index $k$.
     public func rungStep(at index: Int) -> Int {
         var r = minResource
-        for _ in 0..<(minEarlyStoppingRate + index) {
+        let totalRate = minEarlyStoppingRate + index
+        for _ in 0..<totalRate {
             r *= reductionFactor
         }
         return r
@@ -231,17 +318,40 @@ public struct SuccessiveHalvingPruner: Pruner {
 
 /// Hyperband pruner managing multiple brackets of SuccessiveHalvingPruner.
 ///
-/// Deterministically assigns trials to brackets based on `trialNumber % nBrackets`, ensuring
+/// Hyperband addresses the exploration vs. exploitation trade-off by running several
+/// ``SuccessiveHalvingPruner`` brackets with varying aggressive early stopping configurations.
+/// Trials are deterministically assigned to brackets based on `trialNumber % nBrackets`, ensuring
 /// 100% stateless and concurrency-safe bracket partitioning.
+///
+/// ### Example
+/// ```swift
+/// let pruner = HyperbandPruner(minResource: 1, maxResource: 81, reductionFactor: 3)
+/// let study = try Swiftuna.createStudy(pruner: pruner)
+/// ```
 public struct HyperbandPruner: Pruner {
+    /// Minimum resource allocation (initial rung step).
     public let minResource: Int
+
+    /// Maximum resource allocation cap for the most promising trials.
     public let maxResource: Int
+
+    /// Reduction factor $\eta$ governing rung progression and bracket laddering.
     public let reductionFactor: Int
+
+    /// Minimum number of trials required at each rung before pruning begins.
     public let bootstrapCount: Int
 
+    /// Total number of brackets managed by this Hyperband instance.
     public let nBrackets: Int
     private let pruners: [SuccessiveHalvingPruner]
 
+    /// Initializes a Hyperband pruner.
+    ///
+    /// - Parameters:
+    ///   - minResource: Minimum resource step. Defaults to `1`.
+    ///   - maxResource: Maximum resource step. Defaults to `80`.
+    ///   - reductionFactor: Resource scaling factor $\eta$. Defaults to `3`.
+    ///   - bootstrapCount: Trials required before pruning. Defaults to `0`.
     public init(
         minResource: Int = 1,
         maxResource: Int = 80,
@@ -285,6 +395,7 @@ public struct HyperbandPruner: Pruner {
         self.pruners = bracketPruners
     }
 
+    /// Determines the bracket index assigned to a trial.
     public func bracket(for trialNumber: Int) -> Int {
         trialNumber % nBrackets
     }
@@ -308,11 +419,29 @@ public struct HyperbandPruner: Pruner {
 
 import Synchronization
 
-/// Pruner that adds patience (grace period) to an underlying pruner, or acts as a standalone
-/// early-stopping pruner based on lack of objective improvement.
+/// Pruner that wraps another pruner to provide a patience grace period, or acts as a standalone
+/// early-stopping monitor based on stagnation.
+///
+/// `PatientPruner` operates in two distinct modes:
+/// 1. **Wrapped Mode** (`wrappedPruner != nil`): Suppresses pruning signals from `wrappedPruner` until
+///    the underlying pruner votes to prune for `patience` consecutive steps.
+/// 2. **Standalone Mode** (`wrappedPruner == nil`): Monitors objective value improvements, pruning the trial
+///    if it fails to improve upon its historical best value by at least `minDelta` within `patience` steps.
+///
+/// ### Example
+/// ```swift
+/// // Tolerate up to 3 consecutive prune signals from MedianPruner before actually stopping
+/// let base = MedianPruner(nStartupTrials: 5)
+/// let pruner = PatientPruner(wrappedPruner: base, patience: 3)
+/// ```
 public struct PatientPruner: Pruner {
+    /// The underlying pruner whose prune decisions are delayed. If `nil`, operates in standalone mode.
     public let wrappedPruner: (any Pruner)?
+
+    /// The number of consecutive prune votes or unimproved steps tolerated before pruning triggers.
     public let patience: Int
+
+    /// Minimum absolute change in objective value considered a meaningful improvement (standalone mode only).
     public let minDelta: Double
 
     private struct TrialState: Sendable {
@@ -326,6 +455,12 @@ public struct PatientPruner: Pruner {
     }
     private let storage = StateBox()
 
+    /// Initializes a Patient pruner.
+    ///
+    /// - Parameters:
+    ///   - wrappedPruner: Optional base pruner to wrap with patience.
+    ///   - patience: Consecutive steps tolerated before pruning triggers.
+    ///   - minDelta: Minimum improvement threshold for standalone mode. Defaults to `0.0`.
     public init(
         wrappedPruner: (any Pruner)? = nil,
         patience: Int,

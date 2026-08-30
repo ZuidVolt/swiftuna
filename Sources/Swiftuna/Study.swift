@@ -700,6 +700,21 @@ public final class Study: @unchecked Sendable {
 
     // MARK: - Trial Enqueueing & Hyperparameter Importance
 
+    /// Enqueues a trial configuration with specified parameter values and optional user attributes.
+    ///
+    /// Pre-queued configurations will be evaluated by the study in FIFO order prior to stochastic sampling.
+    /// Any parameter omitted from `params` will be sampled dynamically by the study's ``Sampler``.
+    ///
+    /// - Parameters:
+    ///   - params: Parameter names and fixed values to evaluate.
+    ///   - userAttrs: Optional user-defined metadata associated with the enqueued trial.
+    /// - Returns: `self` to support fluent call chaining.
+    /// - Throws: ``SwiftunaError`` if parameter serialization fails or study handle is invalid.
+    ///
+    /// ### Example
+    /// ```swift
+    /// try study.enqueue(["learning_rate": 0.01, "batch_size": 32])
+    /// ```
     @discardableResult
     public func enqueue(
         _ params: [String: any AttributeConvertible],
@@ -756,6 +771,25 @@ public final class Study: @unchecked Sendable {
         return self
     }
 
+    /// Evaluates hyperparameter importance scores using the PED-ANOVA (Partial Dependence ANOVA) algorithm.
+    ///
+    /// Computes how much each hyperparameter influences the objective function variance across completed trials.
+    /// Requires at least 2 completed trials in the study.
+    ///
+    /// - Parameters:
+    ///   - normalize: If `true`, importance scores are normalized so their sum equals `1.0`. Defaults to `true`.
+    ///   - params: Optional subset of parameter names to evaluate. If `nil`, all evaluated parameters are included.
+    /// - Returns: A `Result` containing a dictionary mapping parameter names to importance values,
+    ///   or ``SwiftunaError/noCompletedTrial`` if fewer than 2 completed trials exist.
+    ///
+    /// ### Example
+    /// ```swift
+    /// if case .success(let importances) = study.paramImportances() {
+    ///     for (param, score) in importances.sorted(by: { $0.value > $1.value }) {
+    ///         print("\(param): \(String(format: "%.2f%%", score * 100))")
+    ///     }
+    /// }
+    /// ```
     public func paramImportances(
         normalize: Bool = true,
         params: [String]? = nil
@@ -810,6 +844,23 @@ public final class Study: @unchecked Sendable {
     // MARK: - Trial Injection & Seeding
 
     /// Injects an already-evaluated historical trial or expert baseline into the study.
+    ///
+    /// Injected trials immediately update the surrogate model (e.g. ``TPESampler``) and Pareto frontier,
+    /// allowing warm-starting from previous experiments or prior domain knowledge.
+    ///
+    /// - Parameter trial: A completed or pruned ``PersistedTrial`` object.
+    /// - Throws: ``SwiftunaError`` if the trial's objective values count mismatches study directions or storage fails.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let baseline = PersistedTrial(
+    ///     number: 0,
+    ///     state: .complete,
+    ///     values: [0.42],
+    ///     params: ["learning_rate": 0.001, "batch_size": 64]
+    /// )
+    /// try study.addTrial(baseline)
+    /// ```
     public func addTrial(_ trial: PersistedTrial) throws(SwiftunaError) {
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is expired or invalid")

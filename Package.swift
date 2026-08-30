@@ -58,7 +58,7 @@ let package = Package(
         .target(
             name: "Swiftuna",
             dependencies: ["LibRustuna"],
-            resources: [.process("Swiftuna.docc")],
+            resources: [.process("Documentation.docc")],
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),

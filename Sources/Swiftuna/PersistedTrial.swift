@@ -1,36 +1,79 @@
 public import Foundation
 
+/// Lifecycle state of an optimization trial.
 public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
+    /// The trial is actively being evaluated by an objective function.
     case running = 0
+
+    /// The trial finished evaluation successfully with valid objective value(s).
     case complete = 1
+
+    /// The trial was stopped early by a ``Pruner`` before completing all iterations.
     case pruned = 2
+
+    /// The trial is pre-enqueued and waiting to be processed by a worker.
     case waiting = 3
+
+    /// The trial encountered an unhandled error or exception during evaluation.
     case fail = 4
 }
 
+/// An immutable, evaluated record of a trial persisted in storage.
+///
+/// `PersistedTrial` captures all parameter suggestions, intermediate evaluations,
+/// user-defined metadata attributes, mathematical constraint values, and timestamps.
+///
+/// ### Example
+/// ```swift
+/// if let best = try study.bestTrial {
+///     print("Best Trial #\(best.number) achieved value \(best.value ?? 0.0)")
+///     print("Parameters: \(best.params)")
+/// }
+/// ```
 public struct PersistedTrial: Sendable {
+    /// Zero-based sequential trial index within the study.
     public let number: Int
+
+    /// Final lifecycle state of the trial.
     public let state: TrialState
+
+    /// Primary objective value for single-objective trials (or first value for multi-objective).
     public let value: Double?
+
+    /// Array of objective values matching the study's ``Study/directions``.
     public let values: [Double]
+
+    /// Dictionary of hyperparameter names and their evaluated numerical values.
     public let params: [String: Double]
+
+    /// User-defined string metadata attributes attached to the trial.
     public let userAttrs: [String: String]
+
+    /// Mathematical constraint evaluation values ($v \le 0.0$ indicates satisfaction).
     public let constraints: [String: Double]
+
+    /// Intermediate step-by-step values reported via ``Trial/report(_:step:pruneIfWorse:)``.
     public let intermediateValues: [Int: Double]
+
+    /// Timestamp when trial execution began.
     public let datetimeStart: Date?
+
+    /// Timestamp when trial execution completed or failed.
     public let datetimeComplete: Date?
 
+    /// Indicates whether all mathematical constraints are satisfied ($v \le 0.0$).
     public var isFeasible: Bool {
         constraints.values.allSatisfy { $0 <= 0.0 }
     }
 
-    /// Execution duration of the trial in Swift 6 native Duration.
+    /// Execution duration of the trial in Swift native `Duration`.
     public var duration: Duration? {
         guard let start = datetimeStart, let end = datetimeComplete else { return nil }
         let diff = end.timeIntervalSince(start)
         return .seconds(diff)
     }
 
+    /// Creates a persisted trial record.
     public init(
         number: Int,
         state: TrialState,

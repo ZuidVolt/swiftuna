@@ -44,9 +44,21 @@ reset:
     swift package reset
     swift package resolve
 
-doc: build-ffi
-    swift package --allow-writing-to-directory ./docs generate-documentation --target Swiftuna --disable-indexing --transform-for-static-hosting --hosting-base-path swiftuna --output-path ./docs
+# Build static Swift-DocC documentation for static hosting (GitHub Pages)
+docs-build: build-ffi
+    swift package --allow-writing-to-directory ./docs \
+        generate-documentation --target Swiftuna --disable-indexing --transform-for-static-hosting --hosting-base-path swiftuna --output-path ./docs
 
-doc-preview: build-ffi
-    swift package --disable-sandbox preview-documentation --target Swiftuna
+# Start a local web server to preview DocC documentation with live reload
+docs-preview: build-ffi
+    swift package --disable-sandbox preview-documentation --target Swiftuna --port 8088
+
+# Serve the static ./docs build locally with /swiftuna route emulation
+docs-serve:
+    python3 scripts/serve_docs.py
+
+# Short aliases
+doc: docs-build
+doc-preview: docs-preview
+doc-serve: docs-serve
 
