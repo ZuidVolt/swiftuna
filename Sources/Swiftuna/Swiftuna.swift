@@ -34,6 +34,18 @@ public func createStudy(
     )
 }
 
+@inline(__always)
+internal func withOptionalCString<R>(
+    _ string: String?,
+    _ body: (UnsafePointer<CChar>?) throws -> R
+) rethrows -> R {
+    if let string {
+        return try string.withCString { try body($0) }
+    } else {
+        return try body(nil)
+    }
+}
+
 /// Creates a multi-objective study with custom sampler.
 public func createStudy<S: Sampler>(
     name: String = "default",
@@ -54,27 +66,13 @@ public func createStudy<S: Sampler>(
 
     let status = name.withCString { cName in
         dirInts.withUnsafeBufferPointer { dirBuf in
-            let dirBasePtr = dirBuf.baseAddress
-            if let path = storage.pathString {
-                return path.withCString { cPath in
-                    rustuna_study_create_full(
-                        cName,
-                        dirBasePtr,
-                        directions.count,
-                        storage.rawStorageType,
-                        cPath,
-                        loadIfExists,
-                        rawSampler,
-                        &studyPtr
-                    )
-                }
-            } else {
-                return rustuna_study_create_full(
+            withOptionalCString(storage.pathString) { cPath in
+                rustuna_study_create_full(
                     cName,
-                    dirBasePtr,
+                    dirBuf.baseAddress,
                     directions.count,
                     storage.rawStorageType,
-                    nil,
+                    cPath,
                     loadIfExists,
                     rawSampler,
                     &studyPtr
@@ -131,21 +129,11 @@ public func loadStudy<S: Sampler>(
 
     var studyPtr: OpaquePointer?
     let status: Int32 = name.withCString { cName in
-        if let path = storage.pathString {
-            return path.withCString { cPath in
-                rustuna_study_load(
-                    cName,
-                    storage.rawStorageType,
-                    cPath,
-                    rawSampler,
-                    &studyPtr
-                )
-            }
-        } else {
-            return rustuna_study_load(
+        withOptionalCString(storage.pathString) { cPath in
+            rustuna_study_load(
                 cName,
                 storage.rawStorageType,
-                nil,
+                cPath,
                 rawSampler,
                 &studyPtr
             )

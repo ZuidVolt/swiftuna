@@ -44,23 +44,7 @@ public final class Study: @unchecked Sendable {
         value: Double,
         state: TrialState = .complete
     ) throws(SwiftunaError) {
-        guard let raw else {
-            throw SwiftunaError.handleExpired("Study handle is expired or invalid")
-        }
-
-        let trialNumber = trial.number
-        _ = trial.takeHandle()  // Release from trial deinit
-
-        let status = rustuna_study_tell(
-            raw,
-            UInt32(trialNumber),
-            state.rawValue,
-            value
-        )
-
-        if status != 0 {
-            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to tell trial #\(trialNumber)")
-        }
+        try tell(consuming: trial, values: [value], state: state)
     }
 
     public func tell(
@@ -120,6 +104,15 @@ public final class Study: @unchecked Sendable {
 
     public func optimize(
         nTrials: Int,
+        objective: (inout Trial) throws(SwiftunaError) -> Double
+    ) throws(SwiftunaError) {
+        try optimize(nTrials: nTrials) { (trial: inout Trial) throws(SwiftunaError) -> [Double] in
+            [try objective(&trial)]
+        }
+    }
+
+    public func optimize(
+        nTrials: Int,
         concurrency: Int? = nil,
         objective: @Sendable @escaping (inout Trial) async throws(SwiftunaError) -> Double
     ) async throws(SwiftunaError) {
@@ -128,100 +121,48 @@ public final class Study: @unchecked Sendable {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 var submitted = 0
 
-                for _ in 0..<min(maxConcurrent, nTrials) {
-                    if submitted < nTrials {
-                        submitted += 1
-                        group.addTask {
-                            var trial = try self.ask()
-                            let evalResult: Result<Double, SwiftunaError>
-                            do {
-                                let val = try await objective(&trial)
-                                evalResult = .success(val)
-                            } catch let err as SwiftunaError {
-                                evalResult = .failure(err)
-                            } catch {
-                                evalResult = .failure(.unexpected("\(error)"))
-                            }
+                func spawnNextWorker() {
+                    guard submitted < nTrials else { return }
+                    submitted += 1
+                    group.addTask {
+                        var trial = try self.ask()
+                        let evalResult: Result<Double, SwiftunaError>
+                        do {
+                            let val = try await objective(&trial)
+                            evalResult = .success(val)
+                        } catch let err as SwiftunaError {
+                            evalResult = .failure(err)
+                        } catch {
+                            evalResult = .failure(.unexpected("\(error)"))
+                        }
 
-                            switch evalResult {
-                            case .success(let val):
-                                try self.tell(consuming: trial, value: val, state: .complete)
-                            case .failure(let err):
-                                switch err {
-                                case .trialPruned:
-                                    try self.tell(consuming: trial, value: 0.0, state: .pruned)
-                                default:
-                                    try self.tell(consuming: trial, value: 0.0, state: .fail)
-                                    throw err
-                                }
+                        switch evalResult {
+                        case .success(let val):
+                            try self.tell(consuming: trial, value: val, state: .complete)
+                        case .failure(let err):
+                            switch err {
+                            case .trialPruned:
+                                try self.tell(consuming: trial, value: 0.0, state: .pruned)
+                            default:
+                                try self.tell(consuming: trial, value: 0.0, state: .fail)
+                                throw err
                             }
                         }
                     }
                 }
 
-                while (try await group.next()) != nil {
-                    if submitted < nTrials {
-                        submitted += 1
-                        group.addTask {
-                            var trial = try self.ask()
-                            let evalResult: Result<Double, SwiftunaError>
-                            do {
-                                let val = try await objective(&trial)
-                                evalResult = .success(val)
-                            } catch let err as SwiftunaError {
-                                evalResult = .failure(err)
-                            } catch {
-                                evalResult = .failure(.unexpected("\(error)"))
-                            }
+                for _ in 0..<min(maxConcurrent, nTrials) {
+                    spawnNextWorker()
+                }
 
-                            switch evalResult {
-                            case .success(let val):
-                                try self.tell(consuming: trial, value: val, state: .complete)
-                            case .failure(let err):
-                                switch err {
-                                case .trialPruned:
-                                    try self.tell(consuming: trial, value: 0.0, state: .pruned)
-                                default:
-                                    try self.tell(consuming: trial, value: 0.0, state: .fail)
-                                    throw err
-                                }
-                            }
-                        }
-                    }
+                while (try await group.next()) != nil {
+                    spawnNextWorker()
                 }
             }
         } catch let err as SwiftunaError {
             throw err
         } catch {
             throw SwiftunaError.unexpected("Concurrent optimization failed: \(error)")
-        }
-    }
-
-    public func optimize(
-        nTrials: Int,
-        objective: (inout Trial) throws(SwiftunaError) -> Double
-    ) throws(SwiftunaError) {
-        for _ in 0..<nTrials {
-            var trial = try ask()
-            let evalResult: Result<Double, SwiftunaError>
-            do {
-                let val = try objective(&trial)
-                evalResult = .success(val)
-            } catch {
-                evalResult = .failure(error)
-            }
-            switch evalResult {
-            case .success(let val):
-                try tell(consuming: trial, value: val, state: .complete)
-            case .failure(let err):
-                switch err {
-                case .trialPruned:
-                    try tell(consuming: trial, value: 0.0, state: .pruned)
-                default:
-                    try tell(consuming: trial, value: 0.0, state: .fail)
-                    throw err
-                }
-            }
         }
     }
 
@@ -284,21 +225,7 @@ public final class Study: @unchecked Sendable {
                 throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to get Pareto best trials")
             }
 
-            guard let rawBuffer = trialsPtr, count > 0 else {
-                return []
-            }
-            defer { rustuna_trials_buffer_free(rawBuffer, count) }
-
-            var results: [PersistedTrial] = []
-            results.reserveCapacity(count)
-
-            for i in 0..<count {
-                if let trialPtr = rawBuffer[i] {
-                    let pt = parsePersistedTrial(trialPtr)
-                    results.append(pt)
-                }
-            }
-            return results
+            return parseTrialsBuffer(trialsPtr, count: count)
         }
     }
 
@@ -334,31 +261,32 @@ public final class Study: @unchecked Sendable {
                 throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to get study trials")
             }
 
-            guard let rawBuffer = trialsPtr, count > 0 else {
-                return []
-            }
-            defer { rustuna_trials_buffer_free(rawBuffer, count) }
-
-            var results: [PersistedTrial] = []
-            results.reserveCapacity(count)
-
-            for i in 0..<count {
-                if let trialPtr = rawBuffer[i] {
-                    let pt = parsePersistedTrial(trialPtr)
-                    results.append(pt)
-                }
-            }
-            return results
+            return parseTrialsBuffer(trialsPtr, count: count)
         }
+    }
+
+    private func parseTrialsBuffer(
+        _ rawBuffer: UnsafeMutablePointer<OpaquePointer?>?,
+        count: Int
+    ) -> [PersistedTrial] {
+        guard let rawBuffer, count > 0 else { return [] }
+        defer { rustuna_trials_buffer_free(rawBuffer, count) }
+
+        var results: [PersistedTrial] = []
+        results.reserveCapacity(count)
+
+        for i in 0..<count {
+            if let trialPtr = rawBuffer[i] {
+                results.append(parsePersistedTrial(trialPtr))
+            }
+        }
+        return results
     }
 
     private func parsePersistedTrial(_ trialPtr: OpaquePointer) -> PersistedTrial {
         let num = Int(rustuna_persisted_trial_get_number(trialPtr))
         let stateRaw = rustuna_persisted_trial_get_state(trialPtr)
         let state = TrialState(rawValue: stateRaw) ?? .fail
-
-        var val: Double = 0.0
-        let hasVal = rustuna_persisted_trial_get_value(trialPtr, &val)
 
         var valsPtr: UnsafeMutablePointer<Double>?
         var valsCount: Int = 0
@@ -401,7 +329,7 @@ public final class Study: @unchecked Sendable {
         return PersistedTrial(
             number: num,
             state: state,
-            value: hasVal ? val : nil,
+            value: values.first,
             values: values,
             params: params,
             userAttrs: userAttrs

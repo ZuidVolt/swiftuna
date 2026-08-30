@@ -190,55 +190,22 @@ pub struct RustunaStudy {
     pub inner: Study,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_study_new(
-    name: *const c_char,
-    direction: i32,
-    sampler: *mut RustunaSampler,
-    out_study: *mut *mut RustunaStudy,
-) -> i32 {
-    if out_study.is_null() {
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let study_name = if name.is_null() {
-            "default".to_string()
-        } else {
-            unsafe { CStr::from_ptr(name) }
-                .to_string_lossy()
-                .into_owned()
-        };
-
-        let dir = match direction {
-            1 => Direction::Maximize,
-            _ => Direction::Minimize,
-        };
-
-        let sampler_arc: Arc<dyn Sampler> = if !sampler.is_null() {
-            unsafe { (*sampler).inner.clone() }
-        } else {
-            Arc::new(TpeSampler::new())
-        };
-
-        let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-        match create_study_with_arc(&study_name, storage, sampler_arc, vec![dir]) {
-            Ok(study) => {
-                let boxed = Box::new(RustunaStudy { inner: study });
-                unsafe {
-                    *out_study = Box::into_raw(boxed);
-                }
-                0
-            }
-            Err(e) => set_rustuna_error(&e),
+fn create_storage_backend(
+    storage_type: i32,
+    path: &str,
+) -> Result<Arc<RwLock<dyn Storage>>, rustuna_core::Error> {
+    match storage_type {
+        1 => {
+            let backend = SQLite3Storage::new(path)?;
+            backend.create_database()?;
+            Ok(Arc::new(RwLock::new(CachedStorage::new(Box::new(backend)))))
         }
-    }));
-
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_new: {e:?}"));
-            -99
+        2 => {
+            let file_backend = JournalFileBackend::new(path, None)?;
+            let backend = JournalStorage::new(Box::new(file_backend))?;
+            Ok(Arc::new(RwLock::new(backend)))
         }
+        _ => Ok(Arc::new(RwLock::new(InMemoryStorage::new()))),
     }
 }
 
@@ -288,29 +255,9 @@ pub extern "C" fn rustuna_study_create_full(
             "".to_string()
         };
 
-        let storage: Arc<RwLock<dyn Storage>> = match storage_type {
-            1 => {
-                let backend = match SQLite3Storage::new(&storage_path_str) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                if let Err(e) = backend.create_database() {
-                    return set_rustuna_error(&e);
-                }
-                Arc::new(RwLock::new(CachedStorage::new(Box::new(backend))))
-            }
-            2 => {
-                let file_backend = match JournalFileBackend::new(&storage_path_str, None) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                let backend = match JournalStorage::new(Box::new(file_backend)) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                Arc::new(RwLock::new(backend))
-            }
-            _ => Arc::new(RwLock::new(InMemoryStorage::new())),
+        let storage = match create_storage_backend(storage_type, &storage_path_str) {
+            Ok(s) => s,
+            Err(e) => return set_rustuna_error(&e),
         };
 
         match create_study_with_arc(&study_name, storage.clone(), sampler_arc.clone(), dirs) {
@@ -366,29 +313,9 @@ pub extern "C" fn rustuna_study_load(
             "".to_string()
         };
 
-        let storage: Arc<RwLock<dyn Storage>> = match storage_type {
-            1 => {
-                let backend = match SQLite3Storage::new(&storage_path_str) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                if let Err(e) = backend.create_database() {
-                    return set_rustuna_error(&e);
-                }
-                Arc::new(RwLock::new(CachedStorage::new(Box::new(backend))))
-            }
-            2 => {
-                let file_backend = match JournalFileBackend::new(&storage_path_str, None) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                let backend = match JournalStorage::new(Box::new(file_backend)) {
-                    Ok(b) => b,
-                    Err(e) => return set_rustuna_error(&e),
-                };
-                Arc::new(RwLock::new(backend))
-            }
-            _ => Arc::new(RwLock::new(InMemoryStorage::new())),
+        let storage = match create_storage_backend(storage_type, &storage_path_str) {
+            Ok(s) => s,
+            Err(e) => return set_rustuna_error(&e),
         };
 
         let sampler_arc: Arc<dyn Sampler> = if !sampler.is_null() {
@@ -676,30 +603,7 @@ pub extern "C" fn rustuna_study_tell(
     state: i32,
     value: f64,
 ) -> i32 {
-    if study.is_null() {
-        set_last_error(-1, "study pointer is null".to_string());
-        return -1;
-    }
-    let res = catch_unwind(AssertUnwindSafe(|| {
-        let s = unsafe { &mut *study };
-        let state_val = match state {
-            1 => TrialStateValues::Complete(vec![value]),
-            2 => TrialStateValues::Pruned,
-            4 => TrialStateValues::Fail,
-            _ => TrialStateValues::Complete(vec![value]),
-        };
-        match s.inner.tell(trial_number, state_val) {
-            Ok(()) => 0,
-            Err(e) => set_rustuna_error(&e),
-        }
-    }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_tell: {e:?}"));
-            -99
-        }
-    }
+    rustuna_study_tell_multi(study, trial_number, state, &value, 1)
 }
 
 #[unsafe(no_mangle)]

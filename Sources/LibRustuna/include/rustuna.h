@@ -34,12 +34,6 @@ int32_t rustuna_sampler_nsgaii_new(
 void rustuna_sampler_free(RustunaSampler* sampler);
 
 // Study APIs
-int32_t rustuna_study_new(
-    const char* name,
-    int32_t direction, // 0 = Minimize, 1 = Maximize
-    RustunaSampler* sampler,
-    RustunaStudy** out_study
-);
 int32_t rustuna_study_create_full(
     const char* name,
     const int32_t* directions,
