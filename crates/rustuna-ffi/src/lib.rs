@@ -13,6 +13,7 @@ use rustuna_core::storage::{InMemoryStorage, Storage};
 use rustuna_core::study::{create_study_with_arc, get_best_trial, get_pareto_front, Direction, Study};
 use rustuna_core::trial::{PersistedTrial, Trial, TrialStateValues};
 use rustuna_sampler::nsgaii::NSGAIISampler;
+use rustuna_sampler::qmc::QmcSampler;
 use rustuna_sampler::tpe::TpeSampler;
 use rustuna_storage::cache::CachedStorage;
 use rustuna_storage::journal::file::JournalFileBackend;
@@ -181,6 +182,39 @@ pub extern "C" fn rustuna_sampler_nsgaii_new(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_sampler_nsgaii_new: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_sampler_qmc_new(
+    seed: u64,
+    has_seed: bool,
+    out_sampler: *mut *mut RustunaSampler,
+) -> i32 {
+    if out_sampler.is_null() {
+        set_last_error(-1, "out_sampler pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let sampler = if has_seed {
+            QmcSampler::seed_from_u64(seed)
+        } else {
+            QmcSampler::new()
+        };
+        let boxed = Box::new(RustunaSampler {
+            inner: Arc::new(sampler),
+        });
+        unsafe {
+            *out_sampler = Box::into_raw(boxed);
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_sampler_qmc_new: {e:?}"));
             -99
         }
     }
@@ -799,6 +833,76 @@ pub extern "C" fn rustuna_trial_set_user_attr(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn rustuna_trial_set_constraint(
+    trial: *mut RustunaTrial,
+    key: *const c_char,
+    value: f64,
+) -> i32 {
+    if trial.is_null() || key.is_null() {
+        set_last_error(-1, "trial or key pointer is null".to_string());
+        return -1;
+    }
+    if value.is_nan() {
+        set_last_error(-1, "Constraint value cannot be NaN".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let t = unsafe { &mut *trial };
+        let k = unsafe { CStr::from_ptr(key) }.to_string_lossy().into_owned();
+        match t.inner.set_constraints(HashMap::from([(k, value)])) {
+            Ok(()) => 0,
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_trial_set_constraint: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_trial_set_constraints_json(
+    trial: *mut RustunaTrial,
+    json_str: *const c_char,
+) -> i32 {
+    if trial.is_null() || json_str.is_null() {
+        set_last_error(-1, "trial or json_str pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let t = unsafe { &mut *trial };
+        let s = unsafe { CStr::from_ptr(json_str) }.to_string_lossy();
+        let map: HashMap<String, f64> = match serde_json::from_str(&s) {
+            Ok(m) => m,
+            Err(e) => {
+                set_last_error(-1, format!("Invalid JSON for constraints: {e}"));
+                return -1;
+            }
+        };
+        for (k, v) in &map {
+            if v.is_nan() {
+                set_last_error(-1, format!("Constraint value for '{k}' cannot be NaN"));
+                return -1;
+            }
+        }
+        match t.inner.set_constraints(map) {
+            Ok(()) => 0,
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_trial_set_constraints_json: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rustuna_trial_free(trial: *mut RustunaTrial) {
     if !trial.is_null() {
         unsafe {
@@ -1148,6 +1252,43 @@ pub extern "C" fn rustuna_persisted_trial_get_user_attrs_json(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_user_attrs_json: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_persisted_trial_get_constraints_json(
+    trial: *const RustunaPersistedTrial,
+    out_json: *mut *mut c_char,
+) -> i32 {
+    if trial.is_null() || out_json.is_null() {
+        set_last_error(-1, "trial or out_json pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let t = unsafe { &*trial };
+        match t.inner.constraints() {
+            Ok(map) => match serde_json::to_string(&map) {
+                Ok(json_str) => {
+                    let c_str = CString::new(json_str).unwrap_or_default();
+                    unsafe {
+                        *out_json = c_str.into_raw();
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_last_error(19, format!("Serialization error: {e:?}"));
+                    19
+                }
+            },
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_constraints_json: {e:?}"));
             -99
         }
     }

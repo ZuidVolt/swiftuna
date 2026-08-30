@@ -75,3 +75,32 @@ public struct NSGAIISampler: Sampler {
         return rawPtr
     }
 }
+
+/// A Quasi-Monte Carlo Sampler that generates low-discrepancy Sobol sequences.
+///
+/// QMC systematically minimizes search space voids and clusters across continuous and
+/// categorical parameters using Antonov-Saleev Gray code and Joe-Kuo direction numbers
+/// up to 1,024 dimensions.
+public struct QMCSampler: Sampler {
+    public let seed: UInt64?
+
+    /// Creates a QMC sampler.
+    ///
+    /// - Parameter seed: Optional seed for the fallback random sampler used when
+    ///   parameters fall outside the joint search space.
+    public init(seed: UInt64? = nil) {
+        self.seed = seed
+    }
+
+    public func makeRawHandle() -> OpaquePointer? {
+        var rawPtr: OpaquePointer?
+        let hasSeed = seed != nil
+        let seedVal = seed ?? 0
+        let status = rustuna_sampler_qmc_new(seedVal, hasSeed, &rawPtr)
+        if status != 0 {
+            return nil
+        }
+        return rawPtr
+    }
+}
+

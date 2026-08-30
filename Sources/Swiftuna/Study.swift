@@ -211,6 +211,18 @@ public final class Study: @unchecked Sendable {
         }
     }
 
+    /// Returns the best completed and feasible trial (where all constraints <= 0.0), or nil if no completed trial is feasible.
+    ///
+    /// Throws `SwiftunaError.unsupportedMultiObjective` if called on a multi-objective study (use `bestTrials` instead).
+    public var bestFeasibleTrial: PersistedTrial? {
+        get throws(SwiftunaError) {
+            guard directions.count <= 1 else {
+                throw SwiftunaError.unsupportedMultiObjective
+            }
+            return try trials.completed().feasible().bestFeasible(direction: direction)
+        }
+    }
+
     public var bestTrials: [PersistedTrial] {
         get throws(SwiftunaError) {
             guard let raw else {
@@ -326,13 +338,28 @@ public final class Study: @unchecked Sendable {
             }
         }
 
+        var constraintsJsonPtr: UnsafeMutablePointer<CChar>?
+        let constraintsStatus = rustuna_persisted_trial_get_constraints_json(trialPtr, &constraintsJsonPtr)
+        var constraints: [String: Double] = [:]
+
+        if constraintsStatus == 0, let constraintsJsonPtr {
+            defer { rustuna_string_free(constraintsJsonPtr) }
+            let jsonString = String(cString: constraintsJsonPtr)
+            if let data = jsonString.data(using: .utf8),
+                let parsed = try? JSONDecoder().decode([String: Double].self, from: data)
+            {
+                constraints = parsed
+            }
+        }
+
         return PersistedTrial(
             number: num,
             state: state,
             value: values.first,
             values: values,
             params: params,
-            userAttrs: userAttrs
+            userAttrs: userAttrs,
+            constraints: constraints
         )
     }
 

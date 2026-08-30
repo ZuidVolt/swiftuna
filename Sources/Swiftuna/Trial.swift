@@ -195,4 +195,63 @@ public struct Trial: ~Copyable {
     public var userAttrs: [String: String] {
         localAttrs
     }
+
+    // MARK: - Constraints
+
+    private var localConstraints: [String: Double] = [:]
+
+    /// Sets a single mathematical constraint on the trial.
+    ///
+    /// - Parameters:
+    ///   - name: The unique identifier for the constraint.
+    ///   - value: The constraint evaluation. Values `<= 0.0` indicate satisfaction (feasibility);
+    ///            values `> 0.0` indicate a violation of magnitude `value`.
+    /// - Throws:
+    ///   - `SwiftunaError.invalidArgument` if `value` is NaN.
+    ///   - `SwiftunaError.attrOverwriteNotAllowed` if this constraint key was already set on the trial.
+    public mutating func setConstraint(
+        _ name: String,
+        value: Double
+    ) throws(SwiftunaError) {
+        guard let raw else {
+            throw SwiftunaError.handleExpired("Trial handle is expired or invalid")
+        }
+        guard !value.isNaN else {
+            throw SwiftunaError.invalidArgument("Constraint value for '\(name)' cannot be NaN")
+        }
+        guard !localConstraints.keys.contains(name) else {
+            throw SwiftunaError.attrOverwriteNotAllowed("Constraint '\(name)' is already set on trial #\(number)")
+        }
+
+        let status = name.withCString { cName in
+            rustuna_trial_set_constraint(raw, cName, value)
+        }
+        if status != 0 {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to set constraint '\(name)'")
+        }
+        localConstraints[name] = value
+    }
+
+    /// Sets a strongly-typed constraint on the trial using a `ConstraintKey`.
+    public mutating func setConstraint<K: ConstraintKey>(
+        _ key: K.Type,
+        value: Double
+    ) throws(SwiftunaError) {
+        try setConstraint(K.name, value: value)
+    }
+
+    /// Sets multiple constraints on the trial in batch.
+    public mutating func setConstraints(
+        _ constraints: [String: Double]
+    ) throws(SwiftunaError) {
+        for (name, value) in constraints {
+            try setConstraint(name, value: value)
+        }
+    }
+
+    /// Returns a copy of constraints set on this active trial.
+    public var constraints: [String: Double] {
+        localConstraints
+    }
 }
+

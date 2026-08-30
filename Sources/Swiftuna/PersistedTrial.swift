@@ -15,6 +15,11 @@ public struct PersistedTrial: Sendable {
     public let values: [Double]
     public let params: [String: Double]
     public let userAttrs: [String: String]
+    public let constraints: [String: Double]
+
+    public var isFeasible: Bool {
+        constraints.values.allSatisfy { $0 <= 0.0 }
+    }
 
     public init(
         number: Int,
@@ -22,7 +27,8 @@ public struct PersistedTrial: Sendable {
         value: Double?,
         values: [Double] = [],
         params: [String: Double],
-        userAttrs: [String: String] = [:]
+        userAttrs: [String: String] = [:],
+        constraints: [String: Double] = [:]
     ) {
         self.number = number
         self.state = state
@@ -30,11 +36,16 @@ public struct PersistedTrial: Sendable {
         self.values = values.isEmpty ? (value.map { [$0] } ?? []) : values
         self.params = params
         self.userAttrs = userAttrs
+        self.constraints = constraints
     }
 
     public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {
         guard let str = userAttrs[K.name] else { return nil }
         return K.Value.fromAttributeString(str)
+    }
+
+    public subscript<K: ConstraintKey>(_ key: K.Type) -> Double? {
+        constraints[K.name]
     }
 
     public subscript(_ key: String) -> String? {
@@ -56,6 +67,24 @@ extension Sequence where Element == PersistedTrial {
 
     public func pruned() -> [PersistedTrial] {
         filter { $0.state == .pruned }
+    }
+
+    /// Filters trials to only those where all constraint values are <= 0.0.
+    public func feasible() -> [PersistedTrial] {
+        filter(\.isFeasible)
+    }
+
+    /// Filters trials to only those where at least one constraint is violated (> 0.0).
+    public func infeasible() -> [PersistedTrial] {
+        filter { !$0.isFeasible }
+    }
+
+    /// Returns the optimal completed and feasible trial, or nil if no completed trial is feasible.
+    public func bestFeasible(direction: Direction = .minimize) -> PersistedTrial? {
+        feasible().completed().min { a, b in
+            guard let valA = a.value, let valB = b.value else { return false }
+            return direction == .minimize ? (valA < valB) : (valA > valB)
+        }
     }
 
     public func sortedByValue(ascending: Bool = true) -> [PersistedTrial] {

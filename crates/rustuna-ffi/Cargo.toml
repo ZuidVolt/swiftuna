@@ -18,7 +18,7 @@ path = "src/bin/rust_bench.rs"
 [dependencies]
 rustuna_core = { path = "../../ref/rustuna/rustuna_core" }
 rustuna_importance = { path = "../../ref/rustuna/rustuna_importance" }
-rustuna_sampler = { path = "../../ref/rustuna/rustuna_sampler" }
+rustuna_sampler = { path = "../../ref/rustuna/rustuna_sampler", features = ["qmc"] }
 rustuna_storage = { path = "../../ref/rustuna/rustuna_storage" }
 rand = "0.8.5"
 serde_json = "1"
