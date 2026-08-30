@@ -49,6 +49,13 @@ public final class Study: @unchecked Sendable {
 
     public func tell(
         consuming trial: consuming Trial,
+        state: TrialState
+    ) throws(SwiftunaError) {
+        try tell(consuming: trial, values: [], state: state)
+    }
+
+    public func tell(
+        consuming trial: consuming Trial,
         values: [Double],
         state: TrialState = .complete
     ) throws(SwiftunaError) {
@@ -275,6 +282,88 @@ public final class Study: @unchecked Sendable {
 
             return parseTrialsBuffer(trialsPtr, count: count)
         }
+    }
+
+    /// Fetches trials filtered by their `TrialState` at the storage layer.
+    ///
+    /// This avoids allocating discarded trial objects across the C ABI.
+    public func trials(where states: Set<TrialState>) throws(SwiftunaError) -> [PersistedTrial] {
+        guard let raw else {
+            throw SwiftunaError.handleExpired("Study handle is invalid")
+        }
+
+        var mask: UInt32 = 0
+        for state in states {
+            switch state {
+            case .running:
+                mask |= (1 << 0)
+            case .complete:
+                mask |= (1 << 1)
+            case .pruned:
+                mask |= (1 << 2)
+            case .waiting:
+                mask |= (1 << 3)
+            case .fail:
+                mask |= (1 << 4)
+            }
+        }
+
+        var trialsPtr: UnsafeMutablePointer<OpaquePointer?>?
+        var count: Int = 0
+        let status = rustuna_study_get_trials_filtered(raw, mask, &trialsPtr, &count)
+
+        if status != 0 {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to get filtered trials")
+        }
+
+        return parseTrialsBuffer(trialsPtr, count: count)
+    }
+
+    /// Fetches trials filtered by variadic `TrialState`s.
+    public func trials(where states: TrialState...) throws(SwiftunaError) -> [PersistedTrial] {
+        try trials(where: Set(states))
+    }
+
+    /// Copies this study to a destination storage backend, replicating all trials, directions, and attributes.
+    ///
+    /// - Parameters:
+    ///   - destination: The target storage backend to copy to.
+    ///   - newName: Optional target study name. If nil, uses the source study name.
+    /// - Returns: An active `Study` connected to the destination storage backend.
+    /// - Throws:
+    ///   - `SwiftunaError.duplicatedStudy` if a study with the target name already exists in the destination.
+    @discardableResult
+    public func copy(
+        to destination: StorageBackend,
+        as newName: String? = nil
+    ) throws(SwiftunaError) -> Study {
+        guard let raw else {
+            throw SwiftunaError.handleExpired("Study handle is expired or closed")
+        }
+
+        var outStudy: OpaquePointer?
+        let destPath = destination.pathString
+        let targetName = newName ?? name
+
+        let status = targetName.withCString { cName in
+            if let destPath {
+                destPath.withCString { cPath in
+                    rustuna_study_copy(raw, destination.rawStorageType, cPath, cName, &outStudy)
+                }
+            } else {
+                rustuna_study_copy(raw, destination.rawStorageType, nil, cName, &outStudy)
+            }
+        }
+
+        guard status == 0, let outStudy else {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to copy study '\(name)'")
+        }
+
+        return Study(
+            raw: outStudy,
+            name: targetName,
+            directions: directions
+        )
     }
 
     private func parseTrialsBuffer(

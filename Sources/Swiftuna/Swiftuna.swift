@@ -154,3 +154,67 @@ public func loadStudy(
 ) throws(SwiftunaError) -> Study {
     try loadStudy(name: name, storage: storage, sampler: TPESampler())
 }
+
+// MARK: - Study Lifecycle & Storage Operations
+
+/// Copies a study to a destination storage backend, replicating all trials, directions, and attributes.
+@discardableResult
+public func copyStudy(
+    from study: Study,
+    to destination: StorageBackend,
+    as newName: String? = nil
+) throws(SwiftunaError) -> Study {
+    try study.copy(to: destination, as: newName)
+}
+
+/// Copies a study directly between two storage backends without an active Study instance.
+public func copyStudy(
+    fromName: String,
+    fromStorage: StorageBackend,
+    toName: String? = nil,
+    toStorage: StorageBackend
+) throws(SwiftunaError) {
+    let srcPath = fromStorage.pathString
+    let destPath = toStorage.pathString
+    let targetName = toName ?? fromName
+
+    let status = fromName.withCString { cSrcName in
+        targetName.withCString { cDestName in
+            let invoke = { (cSrcPath: UnsafePointer<CChar>?, cDestPath: UnsafePointer<CChar>?) -> Int32 in
+                rustuna_storage_copy_study(
+                    fromStorage.rawStorageType,
+                    cSrcPath,
+                    cSrcName,
+                    toStorage.rawStorageType,
+                    cDestPath,
+                    cDestName
+                )
+            }
+            if let srcPath, let destPath {
+                return srcPath.withCString { cSrc in
+                    destPath.withCString { cDest in invoke(cSrc, cDest) }
+                }
+            } else if let srcPath {
+                return srcPath.withCString { cSrc in invoke(cSrc, nil) }
+            } else if let destPath {
+                return destPath.withCString { cDest in invoke(nil, cDest) }
+            } else {
+                return invoke(nil, nil)
+            }
+        }
+    }
+
+    if status != 0 {
+        throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to copy study '\(fromName)'")
+    }
+}
+
+/// Returns all studies stored in the specified storage backend.
+public func getStudies(in storage: StorageBackend) throws(SwiftunaError) -> [StudySummary] {
+    try storage.studies()
+}
+
+/// Deletes a study from the specified storage backend by name.
+public func deleteStudy(named name: String, in storage: StorageBackend) throws(SwiftunaError) {
+    try storage.deleteStudy(named: name)
+}

@@ -41,3 +41,56 @@ public enum StorageBackend: Sendable, Equatable {
         }
     }
 }
+
+// MARK: - Storage Lifecycle Operations
+
+import LibRustuna
+
+extension StorageBackend {
+    /// Returns all studies stored in this storage backend.
+    public func studies() throws(SwiftunaError) -> [StudySummary] {
+        var jsonPtr: UnsafeMutablePointer<CChar>?
+        let path = pathString
+        let status = if let path {
+            path.withCString { cPath in
+                rustuna_storage_get_studies_json(rawStorageType, cPath, &jsonPtr)
+            }
+        } else {
+            rustuna_storage_get_studies_json(rawStorageType, nil, &jsonPtr)
+        }
+
+        guard status == 0, let jsonPtr else {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to retrieve studies from storage")
+        }
+        defer { rustuna_string_free(jsonPtr) }
+
+        let jsonStr = String(cString: jsonPtr)
+        guard let data = jsonStr.data(using: .utf8),
+              let payloads = try? JSONDecoder().decode([StudySummaryPayload].self, from: data) else {
+            throw SwiftunaError.storageError("Failed to decode study summaries JSON payload")
+        }
+        return payloads.map { $0.toStudySummary() }
+    }
+
+    /// Deletes a study from this storage backend by name.
+    public func deleteStudy(named name: String) throws(SwiftunaError) {
+        let path = pathString
+        let status = name.withCString { cName in
+            if let path {
+                return path.withCString { cPath in
+                    rustuna_storage_delete_study(rawStorageType, cPath, cName)
+                }
+            } else {
+                return rustuna_storage_delete_study(rawStorageType, nil, cName)
+            }
+        }
+        if status != 0 {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to delete study '\(name)'")
+        }
+    }
+
+    /// Deletes a study using its summary reference.
+    public func deleteStudy(_ summary: StudySummary) throws(SwiftunaError) {
+        try deleteStudy(named: summary.name)
+    }
+}
