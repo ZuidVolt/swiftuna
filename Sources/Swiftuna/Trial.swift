@@ -4,9 +4,18 @@ internal import LibRustuna
 public struct Trial: ~Copyable {
     private var raw: OpaquePointer?
     public let number: Int
+    internal weak var studyRef: Study?
 
-    internal init(raw: OpaquePointer?) {
+    public struct IntermediateStep: Sendable {
+        public let step: Int
+        public let value: Double
+    }
+
+    internal var intermediateSteps: ContiguousArray<IntermediateStep> = []
+
+    internal init(raw: OpaquePointer?, study: Study? = nil) {
         self.raw = raw
+        self.studyRef = study
         if let raw {
             self.number = Int(rustuna_trial_get_number(raw))
         } else {
@@ -260,6 +269,42 @@ public struct Trial: ~Copyable {
 
     public subscript(constraint name: String) -> Double? {
         localConstraints[name]
+    }
+
+    // MARK: - Intermediate Reporting & Pruning
+
+    /// Reports an intermediate objective value for the given step.
+    ///
+    /// - Parameters:
+    ///   - value: The intermediate evaluation value (e.g. loss, accuracy, or reward).
+    ///   - step: The step index (e.g. epoch number).
+    ///   - pruneIfWorse: If true, immediately evaluates the study pruner and throws `SwiftunaError.trialPruned` if pruning is recommended.
+    public mutating func report(
+        _ value: Double,
+        step: Int,
+        pruneIfWorse: Bool = false
+    ) throws(SwiftunaError) {
+        intermediateSteps.append(IntermediateStep(step: step, value: value))
+
+        if pruneIfWorse {
+            if try shouldPrune {
+                throw SwiftunaError.trialPruned(reason: "Pruned at step \(step) with value \(value)")
+            }
+        }
+    }
+
+    /// Evaluates whether the study pruner recommends pruning based on the latest reported value.
+    public var shouldPrune: Bool {
+        get throws(SwiftunaError) {
+            guard let study = studyRef else { return false }
+            guard let last = intermediateSteps.last else { return false }
+            return try study.pruner.shouldPrune(
+                study: study,
+                trialNumber: number,
+                step: last.step,
+                currentValue: last.value
+            )
+        }
     }
 }
 

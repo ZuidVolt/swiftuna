@@ -1,12 +1,13 @@
-import Foundation
+public import Foundation
 internal import LibRustuna
 
-/// Creates a single-objective study with optional storage and custom sampler.
+/// Creates a single-objective study with optional storage, custom sampler, and pruner.
 public func createStudy<S: Sampler>(
     name: String = "default",
     direction: Direction = .minimize,
     storage: StorageBackend = .inMemory,
     sampler: S,
+    pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
     try createStudy(
@@ -14,15 +15,17 @@ public func createStudy<S: Sampler>(
         directions: [direction],
         storage: storage,
         sampler: sampler,
+        pruner: pruner,
         loadIfExists: loadIfExists
     )
 }
 
-/// Creates a single-objective study with default TPESampler.
+/// Creates a single-objective study with default TPESampler and optional pruner.
 public func createStudy(
     name: String = "default",
     direction: Direction = .minimize,
     storage: StorageBackend = .inMemory,
+    pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
     try createStudy(
@@ -30,6 +33,7 @@ public func createStudy(
         direction: direction,
         storage: storage,
         sampler: TPESampler(),
+        pruner: pruner,
         loadIfExists: loadIfExists
     )
 }
@@ -46,12 +50,13 @@ internal func withOptionalCString<R>(
     }
 }
 
-/// Creates a multi-objective study with custom sampler.
+/// Creates a multi-objective study with custom sampler and optional pruner.
 public func createStudy<S: Sampler>(
     name: String = "default",
     directions: [Direction],
     storage: StorageBackend = .inMemory,
     sampler: S,
+    pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
     let rawSampler = sampler.makeRawHandle()
@@ -85,7 +90,7 @@ public func createStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to create study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: directions)
+    return Study(raw: studyPtr, name: name, directions: directions, pruner: pruner)
 }
 
 /// Creates a multi-objective study with default NSGAIISampler (if directions.count > 1) or TPESampler.
@@ -93,6 +98,7 @@ public func createStudy(
     name: String = "default",
     directions: [Direction],
     storage: StorageBackend = .inMemory,
+    pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
     if directions.count > 1 {
@@ -101,6 +107,7 @@ public func createStudy(
             directions: directions,
             storage: storage,
             sampler: NSGAIISampler(),
+            pruner: pruner,
             loadIfExists: loadIfExists
         )
     } else {
@@ -109,16 +116,18 @@ public func createStudy(
             directions: directions,
             storage: storage,
             sampler: TPESampler(),
+            pruner: pruner,
             loadIfExists: loadIfExists
         )
     }
 }
 
-/// Loads an existing study from persistent storage.
+/// Loads an existing study from persistent storage with custom sampler and pruner.
 public func loadStudy<S: Sampler>(
     name: String,
     storage: StorageBackend,
-    sampler: S
+    sampler: S,
+    pruner: any Pruner = NopPruner()
 ) throws(SwiftunaError) -> Study {
     let rawSampler = sampler.makeRawHandle()
     defer {
@@ -144,15 +153,42 @@ public func loadStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to load study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: [.minimize])
+    return Study(raw: studyPtr, name: name, directions: [.minimize], pruner: pruner)
 }
 
-/// Loads an existing study from persistent storage with default TPESampler.
+/// Loads an existing study from persistent storage with default TPESampler and optional pruner.
 public func loadStudy(
     name: String,
-    storage: StorageBackend
+    storage: StorageBackend,
+    pruner: any Pruner = NopPruner()
 ) throws(SwiftunaError) -> Study {
-    try loadStudy(name: name, storage: storage, sampler: TPESampler())
+    try loadStudy(name: name, storage: storage, sampler: TPESampler(), pruner: pruner)
+}
+
+/// Constructs an already-evaluated historical trial that can be injected into a study via `study.addTrial`.
+public func createTrial(
+    state: TrialState = .complete,
+    value: Double? = nil,
+    values: [Double] = [],
+    params: [String: Double] = [:],
+    userAttrs: [String: String] = [:],
+    constraints: [String: Double] = [:],
+    intermediateValues: [Int: Double] = [:],
+    datetimeStart: Date? = nil,
+    datetimeComplete: Date? = nil
+) -> PersistedTrial {
+    PersistedTrial(
+        number: 0,
+        state: state,
+        value: value,
+        values: values,
+        params: params,
+        userAttrs: userAttrs,
+        constraints: constraints,
+        intermediateValues: intermediateValues,
+        datetimeStart: datetimeStart,
+        datetimeComplete: datetimeComplete
+    )
 }
 
 // MARK: - Study Lifecycle & Storage Operations

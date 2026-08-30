@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
     case running = 0
@@ -16,9 +16,19 @@ public struct PersistedTrial: Sendable {
     public let params: [String: Double]
     public let userAttrs: [String: String]
     public let constraints: [String: Double]
+    public let intermediateValues: [Int: Double]
+    public let datetimeStart: Date?
+    public let datetimeComplete: Date?
 
     public var isFeasible: Bool {
         constraints.values.allSatisfy { $0 <= 0.0 }
+    }
+
+    /// Execution duration of the trial in Swift 6 native Duration.
+    public var duration: Duration? {
+        guard let start = datetimeStart, let end = datetimeComplete else { return nil }
+        let diff = end.timeIntervalSince(start)
+        return .seconds(diff)
     }
 
     public init(
@@ -28,7 +38,10 @@ public struct PersistedTrial: Sendable {
         values: [Double] = [],
         params: [String: Double],
         userAttrs: [String: String] = [:],
-        constraints: [String: Double] = [:]
+        constraints: [String: Double] = [:],
+        intermediateValues: [Int: Double] = [:],
+        datetimeStart: Date? = nil,
+        datetimeComplete: Date? = nil
     ) {
         self.number = number
         self.state = state
@@ -37,6 +50,9 @@ public struct PersistedTrial: Sendable {
         self.params = params
         self.userAttrs = userAttrs
         self.constraints = constraints
+        self.intermediateValues = intermediateValues
+        self.datetimeStart = datetimeStart
+        self.datetimeComplete = datetimeComplete
     }
 
     public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {

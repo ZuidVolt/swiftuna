@@ -5,18 +5,31 @@ public final class Study: @unchecked Sendable {
     private var raw: OpaquePointer?
     public let name: String
     public let directions: [Direction]
+    public let pruner: any Pruner
+
     public var direction: Direction {
         directions.first ?? .minimize
     }
 
-    internal init(raw: OpaquePointer?, name: String, directions: [Direction]) {
+    internal init(
+        raw: OpaquePointer?,
+        name: String,
+        directions: [Direction],
+        pruner: any Pruner = NopPruner()
+    ) {
         self.raw = raw
         self.name = name
         self.directions = directions
+        self.pruner = pruner
     }
 
-    internal convenience init(raw: OpaquePointer?, name: String, direction: Direction) {
-        self.init(raw: raw, name: name, directions: [direction])
+    internal convenience init(
+        raw: OpaquePointer?,
+        name: String,
+        direction: Direction,
+        pruner: any Pruner = NopPruner()
+    ) {
+        self.init(raw: raw, name: name, directions: [direction], pruner: pruner)
     }
 
     deinit {
@@ -36,7 +49,7 @@ public final class Study: @unchecked Sendable {
         if status != 0 {
             throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to ask for next trial")
         }
-        return Trial(raw: trialPtr)
+        return Trial(raw: trialPtr, study: self)
     }
 
     public func tell(
@@ -64,14 +77,41 @@ public final class Study: @unchecked Sendable {
         }
 
         let trialNumber = trial.number
+        let intermediateSteps = trial.intermediateSteps
         _ = trial.takeHandle()  // Release from trial deinit
 
-        let status: Int32
-        if values.isEmpty {
-            status = rustuna_study_tell_multi(raw, UInt32(trialNumber), state.rawValue, nil, 0)
-        } else {
-            status = values.withUnsafeBufferPointer { buf in
-                rustuna_study_tell_multi(raw, UInt32(trialNumber), state.rawValue, buf.baseAddress, values.count)
+        var intermediateJsonStr: String? = nil
+        if !intermediateSteps.isEmpty {
+            var stepMap: [String: Double] = [:]
+            for s in intermediateSteps {
+                stepMap[String(s.step)] = s.value
+            }
+            if let data = try? JSONEncoder().encode(stepMap) {
+                intermediateJsonStr = String(data: data, encoding: .utf8)
+            }
+        }
+
+        let status: Int32 = withOptionalCString(intermediateJsonStr) { cIntermediate in
+            if values.isEmpty {
+                return rustuna_study_tell_multi_with_intermediate(
+                    raw,
+                    UInt32(trialNumber),
+                    state.rawValue,
+                    nil,
+                    0,
+                    cIntermediate
+                )
+            } else {
+                return values.withUnsafeBufferPointer { buf in
+                    rustuna_study_tell_multi_with_intermediate(
+                        raw,
+                        UInt32(trialNumber),
+                        state.rawValue,
+                        buf.baseAddress,
+                        values.count,
+                        cIntermediate
+                    )
+                }
             }
         }
 
@@ -85,8 +125,16 @@ public final class Study: @unchecked Sendable {
         nTrials: Int,
         objective: (inout Trial) throws(SwiftunaError) -> [Double]
     ) throws(SwiftunaError) {
+        let clock = ContinuousClock()
         for _ in 0..<nTrials {
             var trial = try ask()
+            let trialNum = trial.number
+            let startTime = clock.now
+            let span = SwiftunaTelemetry.shared.tracer.startSpan(
+                name: "swiftuna.trial",
+                attributes: ["study.name": name, "trial.number": String(trialNum)]
+            )
+
             let evalResult: Result<[Double], SwiftunaError>
             do {
                 let vals = try objective(&trial)
@@ -94,14 +142,24 @@ public final class Study: @unchecked Sendable {
             } catch {
                 evalResult = .failure(error)
             }
+
+            let elapsed = clock.now - startTime
             switch evalResult {
             case .success(let vals):
+                span.setAttribute("trial.status", value: "complete")
+                span.setAttribute(
+                    "trial.duration_ms", value: String(format: "%.2f", Double(elapsed.components.attoseconds) / 1e15))
+                span.end(status: .ok)
                 try tell(consuming: trial, values: vals, state: .complete)
             case .failure(let err):
                 switch err {
-                case .trialPruned:
+                case .trialPruned(_):
+                    span.setAttribute("trial.status", value: "pruned")
+                    span.end(status: .ok)
                     try tell(consuming: trial, values: [], state: .pruned)
                 default:
+                    span.setAttribute("trial.status", value: "failed")
+                    span.end(status: .error(err.description))
                     try tell(consuming: trial, values: [], state: .fail)
                     throw err
                 }
@@ -148,10 +206,10 @@ public final class Study: @unchecked Sendable {
                             try self.tell(consuming: trial, value: val, state: .complete)
                         case .failure(let err):
                             switch err {
-                            case .trialPruned:
-                                try self.tell(consuming: trial, value: 0.0, state: .pruned)
+                            case .trialPruned(_):
+                                try self.tell(consuming: trial, values: [], state: .pruned)
                             default:
-                                try self.tell(consuming: trial, value: 0.0, state: .fail)
+                                try self.tell(consuming: trial, values: [], state: .fail)
                                 throw err
                             }
                         }
@@ -190,8 +248,12 @@ public final class Study: @unchecked Sendable {
             case .success(let val):
                 try tell(consuming: trial, value: val, state: .complete)
             case .failure(let err):
-                try tell(consuming: trial, value: 0.0, state: .fail)
-                throw err
+                if let swiftunaErr = err as? SwiftunaError, case .trialPruned(_) = swiftunaErr {
+                    try tell(consuming: trial, values: [], state: .pruned)
+                } else {
+                    try tell(consuming: trial, values: [], state: .fail)
+                    throw err
+                }
             }
         }
     }
@@ -372,6 +434,30 @@ public final class Study: @unchecked Sendable {
         let userAttrs: [String: String] = decodeJsonMap { rustuna_persisted_trial_get_user_attrs_json(trialPtr, $0) }
         let constraints: [String: Double] = decodeJsonMap { rustuna_persisted_trial_get_constraints_json(trialPtr, $0) }
 
+        let intermediateMap: [String: Double] = decodeJsonMap {
+            rustuna_persisted_trial_get_intermediate_values_json(trialPtr, $0)
+        }
+        var intermediateValues: [Int: Double] = [:]
+        for (k, v) in intermediateMap {
+            if let step = Int(k) {
+                intermediateValues[step] = v
+            }
+        }
+
+        var startStrPtr: UnsafeMutablePointer<CChar>?
+        var datetimeStart: Date? = nil
+        if rustuna_persisted_trial_get_datetime_start(trialPtr, &startStrPtr) == 0, let startStrPtr {
+            datetimeStart = parseOptunaDate(String(cString: startStrPtr))
+            rustuna_string_free(startStrPtr)
+        }
+
+        var completeStrPtr: UnsafeMutablePointer<CChar>?
+        var datetimeComplete: Date? = nil
+        if rustuna_persisted_trial_get_datetime_complete(trialPtr, &completeStrPtr) == 0, let completeStrPtr {
+            datetimeComplete = parseOptunaDate(String(cString: completeStrPtr))
+            rustuna_string_free(completeStrPtr)
+        }
+
         return PersistedTrial(
             number: num,
             state: state,
@@ -379,8 +465,27 @@ public final class Study: @unchecked Sendable {
             values: values,
             params: params,
             userAttrs: userAttrs,
-            constraints: constraints
+            constraints: constraints,
+            intermediateValues: intermediateValues,
+            datetimeStart: datetimeStart,
+            datetimeComplete: datetimeComplete
         )
+    }
+
+    private func parseOptunaDate(_ str: String) -> Date? {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoFormatter.date(from: str) { return d }
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let d = isoFormatter.date(from: str) { return d }
+
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(secondsFromGMT: 0)
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+        if let d = df.date(from: str) { return d }
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return df.date(from: str)
     }
 
     @inline(always)
@@ -589,5 +694,69 @@ public final class Study: @unchecked Sendable {
         }
 
         return .success(dict)
+    }
+
+    // MARK: - Trial Injection & Seeding
+
+    /// Injects an already-evaluated historical trial or expert baseline into the study.
+    public func addTrial(_ trial: PersistedTrial) throws(SwiftunaError) {
+        guard let raw else {
+            throw SwiftunaError.handleExpired("Study handle is expired or invalid")
+        }
+
+        // Fast upfront Swift validation
+        if trial.state == .complete && trial.values.count != directions.count {
+            throw SwiftunaError.invalidArgument(
+                "Trial has \(trial.values.count) objective values, expected \(directions.count) for study '\(name)'"
+            )
+        }
+
+        struct AddTrialJSONPayload: Encodable {
+            let state: Int32
+            let values: [Double]?
+            let params: [String: Double]
+            let intermediate_values: [String: Double]?
+            let user_attrs: [String: String]?
+            let system_attrs: [String: String]?
+        }
+
+        var intMap: [String: Double]? = nil
+        if !trial.intermediateValues.isEmpty {
+            var m: [String: Double] = [:]
+            for (step, val) in trial.intermediateValues {
+                m[String(step)] = val
+            }
+            intMap = m
+        }
+
+        let payload = AddTrialJSONPayload(
+            state: trial.state.rawValue,
+            values: trial.state == .complete ? trial.values : nil,
+            params: trial.params,
+            intermediate_values: intMap,
+            user_attrs: trial.userAttrs.isEmpty ? nil : trial.userAttrs,
+            system_attrs: nil
+        )
+
+        guard let data = try? JSONEncoder().encode(payload),
+            let jsonStr = String(data: data, encoding: .utf8)
+        else {
+            throw SwiftunaError.invalidArgument("Failed to encode trial payload to JSON")
+        }
+
+        let status = jsonStr.withCString { cStr in
+            rustuna_study_add_trial_json(raw, cStr)
+        }
+
+        if status != 0 {
+            throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to add trial to study '\(name)'")
+        }
+    }
+
+    /// Injects multiple historical trials into the study in batch.
+    public func addTrials(_ trials: [PersistedTrial]) throws(SwiftunaError) {
+        for trial in trials {
+            try addTrial(trial)
+        }
     }
 }

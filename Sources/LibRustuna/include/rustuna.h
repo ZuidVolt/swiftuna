@@ -48,6 +48,10 @@ int32_t rustuna_study_tell(RustunaStudy* study, uint32_t trial_number,
                            double value);
 int32_t rustuna_study_tell_multi(RustunaStudy* study, uint32_t trial_number, int32_t state, const double* values,
                                  size_t values_len);
+int32_t rustuna_study_tell_multi_with_intermediate(RustunaStudy* study, uint32_t trial_number, int32_t state,
+                                                   const double* values, size_t values_len,
+                                                   const char* intermediate_json);
+int32_t rustuna_study_add_trial_json(RustunaStudy* study, const char* trial_json);
 
 int32_t rustuna_study_get_best_trial(RustunaStudy* study, RustunaPersistedTrial** out_trial);
 int32_t rustuna_study_get_best_trials(RustunaStudy* study, RustunaPersistedTrial*** out_trials, size_t* out_len);
@@ -86,6 +90,9 @@ void rustuna_values_buffer_free(double* vals, size_t len);
 int32_t rustuna_persisted_trial_get_params_json(const RustunaPersistedTrial* trial, char** out_json);
 int32_t rustuna_persisted_trial_get_user_attrs_json(const RustunaPersistedTrial* trial, char** out_json);
 int32_t rustuna_persisted_trial_get_constraints_json(const RustunaPersistedTrial* trial, char** out_json);
+int32_t rustuna_persisted_trial_get_intermediate_values_json(RustunaPersistedTrial* trial, char** out_json);
+int32_t rustuna_persisted_trial_get_datetime_start(RustunaPersistedTrial* trial, char** out_str);
+int32_t rustuna_persisted_trial_get_datetime_complete(RustunaPersistedTrial* trial, char** out_str);
 void rustuna_persisted_trial_free(RustunaPersistedTrial* trial);
 
 #ifdef __cplusplus

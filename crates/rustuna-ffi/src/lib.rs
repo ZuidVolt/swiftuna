@@ -636,12 +636,58 @@ pub extern "C" fn rustuna_study_tell_multi(
     values: *const f64,
     values_len: usize,
 ) -> i32 {
+    rustuna_study_tell_multi_with_intermediate(
+        study,
+        trial_number,
+        state,
+        values,
+        values_len,
+        std::ptr::null(),
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_tell_multi_with_intermediate(
+    study: *mut RustunaStudy,
+    trial_number: u32,
+    state: i32,
+    values: *const f64,
+    values_len: usize,
+    intermediate_json: *const c_char,
+) -> i32 {
     if study.is_null() {
         set_last_error(-1, "study pointer is null".to_string());
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
         let s = unsafe { &mut *study };
+
+        // If intermediate values were provided, persist them while trial is still running
+        if !intermediate_json.is_null() {
+            if let Ok(json_str) = unsafe { CStr::from_ptr(intermediate_json) }.to_str() {
+                if !json_str.is_empty() {
+                    if let Ok(map) = serde_json::from_str::<HashMap<u32, f64>>(json_str) {
+                        if !map.is_empty() {
+                            let mut guard = match s.inner.storage.write() {
+                                Ok(g) => g,
+                                Err(e) => {
+                                    set_last_error(3, format!("Storage lock poisoned: {e:?}"));
+                                    return 3;
+                                }
+                            };
+                            let trial_id = match guard.get_trial_id_from_study_id_trial_number(s.inner.id, trial_number) {
+                                Ok(id) => id,
+                                Err(e) => return set_rustuna_error(&e),
+                            };
+                            if let Err(e) = guard.set_trial_intermediate_values(trial_id, map) {
+                                return set_rustuna_error(&e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let state_val = match state {
             1 => {
                 if !values.is_null() && values_len > 0 {
@@ -663,7 +709,7 @@ pub extern "C" fn rustuna_study_tell_multi(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_tell_multi: {e:?}"));
+            set_last_error(-99, format!("Panic in rustuna_study_tell_multi_with_intermediate: {e:?}"));
             -99
         }
     }
@@ -1200,6 +1246,83 @@ pub extern "C" fn rustuna_persisted_trial_get_constraints_json(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn rustuna_persisted_trial_get_intermediate_values_json(
+    trial: *mut RustunaPersistedTrial,
+    out_json: *mut *mut c_char,
+) -> i32 {
+    if trial.is_null() || out_json.is_null() {
+        set_last_error(-1, "trial or out_json pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let t = unsafe { &*trial };
+        let json_str = match serde_json::to_string(&t.inner.intermediate_values) {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(19, format!("Failed to serialize intermediate values: {e:?}"));
+                return 19;
+            }
+        };
+        let c_str = CString::new(json_str).unwrap_or_default();
+        unsafe {
+            *out_json = c_str.into_raw();
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_intermediate_values_json: {e:?}"));
+            -99
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_persisted_trial_get_datetime_start(
+    trial: *mut RustunaPersistedTrial,
+    out_str: *mut *mut c_char,
+) -> i32 {
+    if trial.is_null() || out_str.is_null() {
+        return -1;
+    }
+    let t = unsafe { &*trial };
+    if let Some(ref s) = t.inner.datetime_start {
+        let c_str = CString::new(s.as_str()).unwrap_or_default();
+        unsafe {
+            *out_str = c_str.into_raw();
+        }
+    } else {
+        unsafe {
+            *out_str = std::ptr::null_mut();
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_persisted_trial_get_datetime_complete(
+    trial: *mut RustunaPersistedTrial,
+    out_str: *mut *mut c_char,
+) -> i32 {
+    if trial.is_null() || out_str.is_null() {
+        return -1;
+    }
+    let t = unsafe { &*trial };
+    if let Some(ref s) = t.inner.datetime_complete {
+        let c_str = CString::new(s.as_str()).unwrap_or_default();
+        unsafe {
+            *out_str = c_str.into_raw();
+        }
+    } else {
+        unsafe {
+            *out_str = std::ptr::null_mut();
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rustuna_persisted_trial_free(trial: *mut RustunaPersistedTrial) {
     if !trial.is_null() {
         unsafe {
@@ -1628,6 +1751,132 @@ pub extern "C" fn rustuna_study_get_trials_filtered(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_study_get_trials_filtered: {e:?}"));
+            -99
+        }
+    }
+}
+
+// MARK: - Trial Injection & Seeding
+
+#[derive(serde::Deserialize)]
+struct AddTrialPayload {
+    state: i32,
+    values: Option<Vec<f64>>,
+    params: HashMap<String, f64>,
+    distributions: Option<HashMap<String, AddTrialDistributionPayload>>,
+    intermediate_values: Option<HashMap<u32, f64>>,
+    user_attrs: Option<HashMap<String, String>>,
+    system_attrs: Option<HashMap<String, String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct AddTrialDistributionPayload {
+    #[serde(rename = "type")]
+    dist_type: String,
+    low: Option<f64>,
+    high: Option<f64>,
+    step: Option<f64>,
+    log: Option<bool>,
+    choices_count: Option<usize>,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_add_trial_json(
+    study: *mut RustunaStudy,
+    trial_json: *const c_char,
+) -> i32 {
+    if study.is_null() || trial_json.is_null() {
+        set_last_error(-1, "study or trial_json pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *study };
+        let json_str = match unsafe { CStr::from_ptr(trial_json) }.to_str() {
+            Ok(str_ref) => str_ref,
+            Err(e) => {
+                set_last_error(19, format!("Invalid UTF-8: {e:?}"));
+                return 19;
+            }
+        };
+
+        let payload: AddTrialPayload = match serde_json::from_str(json_str) {
+            Ok(p) => p,
+            Err(e) => {
+                set_last_error(19, format!("JSON deserialize error: {e:?}"));
+                return 19;
+            }
+        };
+
+        let state_values = match payload.state {
+            1 => TrialStateValues::Complete(payload.values.unwrap_or_default()),
+            2 => TrialStateValues::Pruned,
+            3 => TrialStateValues::Waiting,
+            4 => TrialStateValues::Fail,
+            _ => TrialStateValues::Running,
+        };
+
+        let mut distributions = HashMap::new();
+        if let Some(dists) = payload.distributions {
+            for (k, d) in dists {
+                let dist = match d.dist_type.as_str() {
+                    "int" => Distribution::new_int(
+                        d.low.unwrap_or(0.0) as i64,
+                        d.high.unwrap_or(100.0) as i64,
+                        d.step.unwrap_or(1.0) as i64,
+                        d.log.unwrap_or(false),
+                    ),
+                    "categorical" => Distribution::new_categorical(d.choices_count.unwrap_or(1)),
+                    _ => Distribution::new_float(
+                        d.low.unwrap_or(0.0),
+                        d.high.unwrap_or(1.0),
+                        d.step,
+                        d.log.unwrap_or(false),
+                    ),
+                };
+                distributions.insert(k, dist);
+            }
+        }
+        for (k, v) in &payload.params {
+            distributions.entry(k.clone()).or_insert_with(|| {
+                Distribution::new_float(*v, *v, None, false)
+            });
+        }
+
+        let mut attrs = rustuna_core::attr::Attrs::new();
+        if let Some(user_attrs) = payload.user_attrs {
+            for (k, v) in user_attrs {
+                attrs.insert(rustuna_core::attr::AttrKey::User(k.into()), v);
+            }
+        }
+        if let Some(sys_attrs) = payload.system_attrs {
+            for (k, v) in sys_attrs {
+                attrs.insert(rustuna_core::attr::AttrKey::System(k.into()), v);
+            }
+        }
+
+        let pt = PersistedTrial {
+            id: 0,
+            study_id: s.inner.id,
+            number: 0,
+            state_values,
+            internal_params: payload.params,
+            distributions,
+            intermediate_values: payload.intermediate_values.unwrap_or_default(),
+            attrs,
+            datetime_start: None,
+            datetime_complete: None,
+        };
+
+        match s.inner.add_trial(pt) {
+            Ok(()) => 0,
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_add_trial_json: {e:?}"));
             -99
         }
     }
