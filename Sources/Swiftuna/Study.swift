@@ -1,6 +1,36 @@
 internal import Foundation
 internal import LibRustuna
 
+/// Manages trial limits and monotonic execution deadlines for optimization loops.
+internal struct OptimizationBudget: Sendable {
+    let nTrials: Int?
+    let deadline: ContinuousClock.Instant?
+    private let clock = ContinuousClock()
+
+    init(nTrials: Int?, timeout: Duration?) throws(SwiftunaError) {
+        guard nTrials != nil || timeout != nil else {
+            throw SwiftunaError.invalidArgument("Either nTrials or timeout must be specified in optimize")
+        }
+        self.nTrials = nTrials
+        let c = ContinuousClock()
+        self.deadline = timeout.map { c.now + $0 }
+    }
+
+    var isExhausted: Bool {
+        if let deadline, clock.now >= deadline {
+            return true
+        }
+        return false
+    }
+
+    func shouldStop(submitted: Int) -> Bool {
+        if let nTrials, submitted >= nTrials {
+            return true
+        }
+        return isExhausted
+    }
+}
+
 public final class Study: @unchecked Sendable {
     private var raw: OpaquePointer?
     public let name: String
@@ -122,22 +152,11 @@ public final class Study: @unchecked Sendable {
         timeout: Duration? = nil,
         objective: (inout Trial) throws(SwiftunaError) -> [Double]
     ) throws(SwiftunaError) {
-        guard nTrials != nil || timeout != nil else {
-            throw SwiftunaError.invalidArgument("Either nTrials or timeout must be specified in optimize")
-        }
-
+        let budget = try OptimizationBudget(nTrials: nTrials, timeout: timeout)
         let clock = ContinuousClock()
-        let deadline = timeout.map { clock.now + $0 }
         var iteration = 0
 
-        while true {
-            if let nTrials, iteration >= nTrials {
-                break
-            }
-            if let deadline, clock.now >= deadline {
-                break
-            }
-
+        while !budget.shouldStop(submitted: iteration) {
             let trial: Trial
             do {
                 trial = try ask()
@@ -202,12 +221,7 @@ public final class Study: @unchecked Sendable {
         concurrency: Int? = nil,
         objective: @Sendable @escaping (inout Trial) async throws -> Double
     ) async throws {
-        guard nTrials != nil || timeout != nil else {
-            throw SwiftunaError.invalidArgument("Either nTrials or timeout must be specified in optimize")
-        }
-
-        let clock = ContinuousClock()
-        let deadline = timeout.map { clock.now + $0 }
+        let budget = try OptimizationBudget(nTrials: nTrials, timeout: timeout)
         let maxConcurrent = max(1, concurrency ?? ProcessInfo.processInfo.activeProcessorCount)
         let initialLimit = nTrials != nil ? min(maxConcurrent, nTrials!) : maxConcurrent
 
@@ -216,8 +230,7 @@ public final class Study: @unchecked Sendable {
                 var submitted = 0
 
                 func spawnNextWorker() {
-                    if let nTrials, submitted >= nTrials { return }
-                    if let deadline, clock.now >= deadline { return }
+                    if budget.shouldStop(submitted: submitted) { return }
 
                     submitted += 1
                     group.addTask {
@@ -665,7 +678,8 @@ public final class Study: @unchecked Sendable {
         var paramsJsonStr: String?
         if let params {
             if let data = try? JSONEncoder().encode(params),
-                let str = String(data: data, encoding: .utf8) {
+                let str = String(data: data, encoding: .utf8)
+            {
                 paramsJsonStr = str
             }
         }
@@ -723,9 +737,12 @@ public final class Study: @unchecked Sendable {
             let system_attrs: [String: String]?
         }
 
-        let intMap = trial.intermediateValues.isEmpty ? nil : Dictionary(
-            uniqueKeysWithValues: trial.intermediateValues.map { (String($0.key), $0.value) }
-        )
+        let intMap =
+            trial.intermediateValues.isEmpty
+            ? nil
+            : Dictionary(
+                uniqueKeysWithValues: trial.intermediateValues.map { (String($0.key), $0.value) }
+            )
 
         let payload = AddTrialJSONPayload(
             state: trial.state.rawValue,

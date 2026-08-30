@@ -153,42 +153,42 @@ public struct SuccessiveHalvingPruner: Pruner {
     public let reductionFactor: Int
     public let minEarlyStoppingRate: Int
     public let bootstrapCount: Int
+    public let trialFilter: (@Sendable (PersistedTrial) -> Bool)?
 
     public init(
         minResource: Int = 1,
         reductionFactor: Int = 4,
         minEarlyStoppingRate: Int = 0,
-        bootstrapCount: Int = 0
+        bootstrapCount: Int = 0,
+        trialFilter: (@Sendable (PersistedTrial) -> Bool)? = nil
     ) {
         self.minResource = max(1, minResource)
         self.reductionFactor = max(2, reductionFactor)
         self.minEarlyStoppingRate = max(0, minEarlyStoppingRate)
         self.bootstrapCount = max(0, bootstrapCount)
+        self.trialFilter = trialFilter
     }
 
     /// Computes the rung step for index k.
     public func rungStep(at index: Int) -> Int {
-        var multiplier = 1
+        var r = minResource
         for _ in 0..<(minEarlyStoppingRate + index) {
-            multiplier *= reductionFactor
+            r *= reductionFactor
         }
-        return minResource * multiplier
+        return r
     }
 
     /// Checks if a given step matches any rung.
     public func isRung(step: Int) -> Bool {
         guard step >= minResource else { return false }
-        var k = 0
-        while true {
-            let r = rungStep(at: k)
+        var r = rungStep(at: 0)
+        while r <= step {
             if r == step {
                 return true
             }
-            if r > step {
-                return false
-            }
-            k += 1
+            r *= reductionFactor
         }
+        return false
     }
 
     public func shouldPrune(
@@ -203,7 +203,9 @@ public struct SuccessiveHalvingPruner: Pruner {
 
         let allTrials = try study.trials
         let completedOrPruned = allTrials.filter {
-            $0.number < trialNumber && ($0.state == .complete || $0.state == .pruned)
+            $0.number < trialNumber
+                && ($0.state == .complete || $0.state == .pruned)
+                && (trialFilter?($0) ?? true)
         }
 
         let valuesAtRung = completedOrPruned.compactMap { $0.intermediateValues[step] }
@@ -275,7 +277,8 @@ public struct HyperbandPruner: Pruner {
                     minResource: minRBracket,
                     reductionFactor: eta,
                     minEarlyStoppingRate: s,
-                    bootstrapCount: bootstrapCount
+                    bootstrapCount: bootstrapCount,
+                    trialFilter: { $0.number % totalBrackets == s }
                 )
             )
         }

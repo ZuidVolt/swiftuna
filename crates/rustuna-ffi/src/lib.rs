@@ -10,7 +10,9 @@ use std::sync::{Arc, RwLock};
 use rustuna_core::distribution::Distribution;
 use rustuna_core::sampler::{RandomSampler, Sampler};
 use rustuna_core::storage::{InMemoryStorage, Storage};
-use rustuna_core::study::{create_study_with_arc, get_best_trial, get_pareto_front, Direction, Study};
+use rustuna_core::study::{
+    create_study_with_arc, get_best_trial, get_pareto_front, Direction, Study,
+};
 use rustuna_core::trial::{PersistedTrial, Trial, TrialStateValues};
 use rustuna_sampler::nsgaii::NSGAIISampler;
 use rustuna_sampler::qmc::QmcSampler;
@@ -167,10 +169,26 @@ pub extern "C" fn rustuna_sampler_nsgaii_new(
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
-        let pop_size = if population_size > 0 { population_size } else { 50 };
-        let mut_prob = if mutation_prob > 0.0 { Some(mutation_prob) } else { None };
-        let cross_prob = if crossover_prob > 0.0 { crossover_prob } else { 0.9 };
-        let swap_prob = if swapping_prob > 0.0 { swapping_prob } else { 0.5 };
+        let pop_size = if population_size > 0 {
+            population_size
+        } else {
+            50
+        };
+        let mut_prob = if mutation_prob > 0.0 {
+            Some(mutation_prob)
+        } else {
+            None
+        };
+        let cross_prob = if crossover_prob > 0.0 {
+            crossover_prob
+        } else {
+            0.9
+        };
+        let swap_prob = if swapping_prob > 0.0 {
+            swapping_prob
+        } else {
+            0.5
+        };
 
         let sampler = if seed != 0 {
             NSGAIISampler::seed_from_u64(seed, pop_size, mut_prob, cross_prob, swap_prob)
@@ -295,23 +313,34 @@ impl Sampler for GridSampler {
 
         let trials = storage_guard.get_trials(ctx.study_id)?;
 
-        for candidate in &self.combinations {
-            let already_evaluated = trials.iter().flatten().any(|trial| {
-                if trial.state_values.state() == rustuna_core::trial::TrialState::Fail {
-                    return false;
+        let mut evaluated_hashes = std::collections::HashSet::new();
+        for trial in trials.iter().flatten() {
+            if trial.state_values.state() == rustuna_core::trial::TrialState::Fail {
+                continue;
+            }
+            let mut key = Vec::with_capacity(self.param_names.len());
+            let mut all_present = true;
+            for name in &self.param_names {
+                if let Some(&val) = trial.internal_params.get(name) {
+                    key.push(val.to_bits());
+                } else {
+                    all_present = false;
+                    break;
                 }
-                self.param_names.iter().all(|name| {
-                    if let (Some(&c_val), Some(&t_val)) =
-                        (candidate.get(name), trial.internal_params.get(name))
-                    {
-                        (c_val - t_val).abs() < 1e-9
-                    } else {
-                        false
-                    }
-                })
-            });
+            }
+            if all_present {
+                evaluated_hashes.insert(key);
+            }
+        }
 
-            if !already_evaluated {
+        for candidate in &self.combinations {
+            let key: Vec<u64> = self
+                .param_names
+                .iter()
+                .filter_map(|name| candidate.get(name).map(|v| v.to_bits()))
+                .collect();
+
+            if !evaluated_hashes.contains(&key) {
                 let mut res = HashMap::new();
                 for (k, v) in candidate {
                     if search_space.contains_key(k) {
@@ -337,7 +366,10 @@ pub extern "C" fn rustuna_sampler_grid_new(
     out_sampler: *mut *mut RustunaSampler,
 ) -> i32 {
     if search_space_json.is_null() || out_sampler.is_null() {
-        set_last_error(-1, "search_space_json or out_sampler pointer is null".to_string());
+        set_last_error(
+            -1,
+            "search_space_json or out_sampler pointer is null".to_string(),
+        );
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
@@ -418,15 +450,20 @@ pub extern "C" fn rustuna_study_create_full(
         let study_name = if name.is_null() {
             "default".to_string()
         } else {
-            unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(name) }
+                .to_string_lossy()
+                .into_owned()
         };
 
         let dirs: Vec<Direction> = if !directions.is_null() && directions_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(directions, directions_len) };
-            slice.iter().map(|&d| match d {
-                1 => Direction::Maximize,
-                _ => Direction::Minimize,
-            }).collect()
+            slice
+                .iter()
+                .map(|&d| match d {
+                    1 => Direction::Maximize,
+                    _ => Direction::Minimize,
+                })
+                .collect()
         } else {
             vec![Direction::Minimize]
         };
@@ -440,7 +477,9 @@ pub extern "C" fn rustuna_study_create_full(
         };
 
         let storage_path_str = if !storage_path.is_null() {
-            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(storage_path) }
+                .to_string_lossy()
+                .into_owned()
         } else {
             "".to_string()
         };
@@ -458,7 +497,9 @@ pub extern "C" fn rustuna_study_create_full(
                 }
                 0
             }
-            Err(e) if load_if_exists && matches!(e.kind, rustuna_core::ErrorKind::DuplicatedStudy) => {
+            Err(e)
+                if load_if_exists && matches!(e.kind, rustuna_core::ErrorKind::DuplicatedStudy) =>
+            {
                 match Study::from_name(study_name, storage, sampler_arc) {
                     Ok(study) => {
                         let boxed = Box::new(RustunaStudy { inner: study });
@@ -495,10 +536,14 @@ pub extern "C" fn rustuna_study_load(
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
-        let study_name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+        let study_name = unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
 
         let storage_path_str = if !storage_path.is_null() {
-            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(storage_path) }
+                .to_string_lossy()
+                .into_owned()
         } else {
             "".to_string()
         };
@@ -555,8 +600,12 @@ pub extern "C" fn rustuna_study_set_user_attr(
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
         let s = unsafe { &mut *study };
-        let k = unsafe { CStr::from_ptr(key) }.to_string_lossy().into_owned();
-        let v = unsafe { CStr::from_ptr(val) }.to_string_lossy().into_owned();
+        let k = unsafe { CStr::from_ptr(key) }
+            .to_string_lossy()
+            .into_owned();
+        let v = unsafe { CStr::from_ptr(val) }
+            .to_string_lossy()
+            .into_owned();
         let mut map = HashMap::new();
         map.insert(k, v);
         match s.inner.set_user_attr(map) {
@@ -585,7 +634,9 @@ pub extern "C" fn rustuna_study_get_user_attr(
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
         let s = unsafe { &mut *study };
-        let k = unsafe { CStr::from_ptr(key) }.to_string_lossy().into_owned();
+        let k = unsafe { CStr::from_ptr(key) }
+            .to_string_lossy()
+            .into_owned();
         match s.inner.get_user_attr(k) {
             Ok(Some(val_str)) => {
                 let c_str = CString::new(val_str).unwrap_or_default();
@@ -658,7 +709,9 @@ pub extern "C" fn rustuna_study_enqueue_trial(
                         rustuna_core::attr::CategoryLabel::String(num.to_string())
                     }
                 }
-                serde_json::Value::String(s) => rustuna_core::attr::CategoryLabel::String(s.clone()),
+                serde_json::Value::String(s) => {
+                    rustuna_core::attr::CategoryLabel::String(s.clone())
+                }
                 serde_json::Value::Bool(b) => rustuna_core::attr::CategoryLabel::Bool(*b),
                 serde_json::Value::Null => rustuna_core::attr::CategoryLabel::None,
                 _ => rustuna_core::attr::CategoryLabel::String(v.to_string()),
@@ -726,28 +779,29 @@ pub extern "C" fn rustuna_study_get_param_importances(
 
         let evaluator = rustuna_importance::PedAnovaImportanceEvaluator::default();
         match rustuna_importance::get_param_importances_with(&s.inner, &evaluator, options) {
-            Ok(importances) => {
-                match serde_json::to_string(&importances) {
-                    Ok(json_str) => {
-                        let c_str = CString::new(json_str).unwrap_or_default();
-                        unsafe {
-                            *out_json = c_str.into_raw();
-                        }
-                        0
+            Ok(importances) => match serde_json::to_string(&importances) {
+                Ok(json_str) => {
+                    let c_str = CString::new(json_str).unwrap_or_default();
+                    unsafe {
+                        *out_json = c_str.into_raw();
                     }
-                    Err(e) => {
-                        set_last_error(19, format!("Failed to serialize importances: {e:?}"));
-                        19
-                    }
+                    0
                 }
-            }
+                Err(e) => {
+                    set_last_error(19, format!("Failed to serialize importances: {e:?}"));
+                    19
+                }
+            },
             Err(e) => set_rustuna_error(&e),
         }
     }));
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_get_param_importances: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_study_get_param_importances: {e:?}"),
+            );
             -99
         }
     }
@@ -842,7 +896,9 @@ pub extern "C" fn rustuna_study_tell_multi(
                                     return 3;
                                 }
                             };
-                            let trial_id = match guard.get_trial_id_from_study_id_trial_number(s.inner.id, trial_number) {
+                            let trial_id = match guard
+                                .get_trial_id_from_study_id_trial_number(s.inner.id, trial_number)
+                            {
                                 Ok(id) => id,
                                 Err(e) => return set_rustuna_error(&e),
                             };
@@ -876,7 +932,10 @@ pub extern "C" fn rustuna_study_tell_multi(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_tell_multi_with_intermediate: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_study_tell_multi_with_intermediate: {e:?}"),
+            );
             -99
         }
     }
@@ -970,8 +1029,16 @@ pub extern "C" fn rustuna_trial_suggest_categorical(
     choices_count: usize,
     out_index: *mut usize,
 ) -> i32 {
-    if trial.is_null() || name.is_null() || choices.is_null() || out_index.is_null() || choices_count == 0 {
-        set_last_error(-1, "trial, name, choices, or out_index pointer is null or choices_count is 0".to_string());
+    if trial.is_null()
+        || name.is_null()
+        || choices.is_null()
+        || out_index.is_null()
+        || choices_count == 0
+    {
+        set_last_error(
+            -1,
+            "trial, name, choices, or out_index pointer is null or choices_count is 0".to_string(),
+        );
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
@@ -984,22 +1051,33 @@ pub extern "C" fn rustuna_trial_suggest_categorical(
                 set_last_error(-1, format!("Choice at index {i} is null"));
                 return -1;
             }
-            let choice_str = unsafe { CStr::from_ptr(choice_ptr) }.to_string_lossy().into_owned();
+            let choice_str = unsafe { CStr::from_ptr(choice_ptr) }
+                .to_string_lossy()
+                .into_owned();
             category_labels.push(rustuna_core::attr::CategoryLabel::String(choice_str));
         }
 
-        let dist_choice = match t.inner.suggest_categorical_enum(&param_name, &category_labels) {
+        let dist_choice = match t
+            .inner
+            .suggest_categorical_enum(&param_name, &category_labels)
+        {
             Ok(c) => c,
             Err(e) => return set_rustuna_error(&e),
         };
-        let chosen_idx = category_labels.iter().position(|l| l == dist_choice).unwrap_or(0);
+        let chosen_idx = category_labels
+            .iter()
+            .position(|l| l == dist_choice)
+            .unwrap_or(0);
         unsafe { *out_index = chosen_idx };
         0
     }));
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_trial_suggest_categorical: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_trial_suggest_categorical: {e:?}"),
+            );
             -99
         }
     }
@@ -1018,7 +1096,9 @@ pub extern "C" fn rustuna_trial_set_user_attr(
     let res = catch_unwind(AssertUnwindSafe(|| {
         let t = unsafe { &mut *trial };
         let k = unsafe { CStr::from_ptr(key) }.to_string_lossy();
-        let v = unsafe { CStr::from_ptr(val) }.to_string_lossy().into_owned();
+        let v = unsafe { CStr::from_ptr(val) }
+            .to_string_lossy()
+            .into_owned();
         match t.inner.set_user_attr(&k, v) {
             Ok(()) => 0,
             Err(e) => set_rustuna_error(&e),
@@ -1049,7 +1129,9 @@ pub extern "C" fn rustuna_trial_set_constraint(
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
         let t = unsafe { &mut *trial };
-        let k = unsafe { CStr::from_ptr(key) }.to_string_lossy().into_owned();
+        let k = unsafe { CStr::from_ptr(key) }
+            .to_string_lossy()
+            .into_owned();
         match t.inner.set_constraints(HashMap::from([(k, value)])) {
             Ok(()) => 0,
             Err(e) => set_rustuna_error(&e),
@@ -1063,7 +1145,6 @@ pub extern "C" fn rustuna_trial_set_constraint(
         }
     }
 }
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rustuna_trial_free(trial: *mut RustunaTrial) {
@@ -1104,7 +1185,8 @@ pub extern "C" fn rustuna_study_get_best_trial(
             }
         };
 
-        let trial_id = match guard.get_trial_id_from_study_id_trial_number(s.inner.id, trial_number) {
+        let trial_id = match guard.get_trial_id_from_study_id_trial_number(s.inner.id, trial_number)
+        {
             Ok(id) => id,
             Err(e) => {
                 return set_rustuna_error(&e);
@@ -1140,7 +1222,10 @@ pub extern "C" fn rustuna_study_get_best_trials(
     out_len: *mut usize,
 ) -> i32 {
     if study.is_null() || out_trials.is_null() || out_len.is_null() {
-        set_last_error(-1, "study, out_trials, or out_len pointer is null".to_string());
+        set_last_error(
+            -1,
+            "study, out_trials, or out_len pointer is null".to_string(),
+        );
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
@@ -1162,10 +1247,13 @@ pub extern "C" fn rustuna_study_get_best_trials(
             Err(e) => return set_rustuna_error(&e),
         };
 
-        let mut pt_ptrs: Vec<*mut RustunaPersistedTrial> = Vec::with_capacity(pareto_front_numbers.len());
+        let mut pt_ptrs: Vec<*mut RustunaPersistedTrial> =
+            Vec::with_capacity(pareto_front_numbers.len());
         for num in pareto_front_numbers {
             if let Some(Some(trial)) = trials_vec.get(num as usize) {
-                pt_ptrs.push(Box::into_raw(Box::new(RustunaPersistedTrial { inner: trial.clone() })));
+                pt_ptrs.push(Box::into_raw(Box::new(RustunaPersistedTrial {
+                    inner: trial.clone(),
+                })));
             }
         }
 
@@ -1183,7 +1271,10 @@ pub extern "C" fn rustuna_study_get_best_trials(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_get_best_trials: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_study_get_best_trials: {e:?}"),
+            );
             -99
         }
     }
@@ -1292,7 +1383,10 @@ pub extern "C" fn rustuna_persisted_trial_get_json(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_persisted_trial_get_json: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_persisted_trial_get_json: {e:?}"),
+            );
             -99
         }
     }
@@ -1357,7 +1451,10 @@ fn copy_study_core(
         Err(e) => return Err(set_rustuna_error(&e)),
     };
     if existing_studies.iter().any(|st| st.name == to_study_name) {
-        set_last_error(4, format!("Study '{to_study_name}' already exists in destination storage"));
+        set_last_error(
+            4,
+            format!("Study '{to_study_name}' already exists in destination storage"),
+        );
         return Err(4);
     }
 
@@ -1399,12 +1496,16 @@ pub extern "C" fn rustuna_study_copy(
         let dest_storage_path = if to_storage_path.is_null() {
             "".to_string()
         } else {
-            unsafe { CStr::from_ptr(to_storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(to_storage_path) }
+                .to_string_lossy()
+                .into_owned()
         };
         let dest_study_name = if to_study_name.is_null() {
             s.inner.name.clone()
         } else {
-            unsafe { CStr::from_ptr(to_study_name) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(to_study_name) }
+                .to_string_lossy()
+                .into_owned()
         };
 
         let dest_storage = match create_storage_backend(to_storage_type, &dest_storage_path) {
@@ -1412,14 +1513,20 @@ pub extern "C" fn rustuna_study_copy(
             Err(e) => return set_rustuna_error(&e),
         };
 
-        if let Err(code) = copy_study_core(s.inner.storage.clone(), s.inner.id, dest_storage.clone(), &dest_study_name) {
+        if let Err(code) = copy_study_core(
+            s.inner.storage.clone(),
+            s.inner.id,
+            dest_storage.clone(),
+            &dest_study_name,
+        ) {
             return code;
         }
 
-        let new_study_instance = match Study::from_name(dest_study_name, dest_storage, s.inner.sampler.clone()) {
-            Ok(st) => st,
-            Err(e) => return set_rustuna_error(&e),
-        };
+        let new_study_instance =
+            match Study::from_name(dest_study_name, dest_storage, s.inner.sampler.clone()) {
+                Ok(st) => st,
+                Err(e) => return set_rustuna_error(&e),
+            };
 
         unsafe {
             *out_study = Box::into_raw(Box::new(RustunaStudy {
@@ -1455,19 +1562,25 @@ pub extern "C" fn rustuna_storage_copy_study(
         let src_path = if from_storage_path.is_null() {
             "".to_string()
         } else {
-            unsafe { CStr::from_ptr(from_storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(from_storage_path) }
+                .to_string_lossy()
+                .into_owned()
         };
         let src_name = unsafe { CStr::from_ptr(from_study_name) }.to_string_lossy();
 
         let dest_path = if to_storage_path.is_null() {
             "".to_string()
         } else {
-            unsafe { CStr::from_ptr(to_storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(to_storage_path) }
+                .to_string_lossy()
+                .into_owned()
         };
         let dest_name = if to_study_name.is_null() {
             src_name.to_string()
         } else {
-            unsafe { CStr::from_ptr(to_study_name) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(to_study_name) }
+                .to_string_lossy()
+                .into_owned()
         };
 
         let src_storage = match create_storage_backend(from_storage_type, &src_path) {
@@ -1530,7 +1643,9 @@ pub extern "C" fn rustuna_storage_get_studies_json(
         let path = if storage_path.is_null() {
             "".to_string()
         } else {
-            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(storage_path) }
+                .to_string_lossy()
+                .into_owned()
         };
 
         let storage = match create_storage_backend(storage_type, &path) {
@@ -1604,7 +1719,10 @@ pub extern "C" fn rustuna_storage_get_studies_json(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_storage_get_studies_json: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_storage_get_studies_json: {e:?}"),
+            );
             -99
         }
     }
@@ -1624,7 +1742,9 @@ pub extern "C" fn rustuna_storage_delete_study(
         let path = if storage_path.is_null() {
             "".to_string()
         } else {
-            unsafe { CStr::from_ptr(storage_path) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(storage_path) }
+                .to_string_lossy()
+                .into_owned()
         };
         let name = unsafe { CStr::from_ptr(study_name) }.to_string_lossy();
 
@@ -1677,7 +1797,10 @@ pub extern "C" fn rustuna_study_get_trials_filtered(
     out_len: *mut usize,
 ) -> i32 {
     if study.is_null() || out_trials.is_null() || out_len.is_null() {
-        set_last_error(-1, "study, out_trials, or out_len pointer is null".to_string());
+        set_last_error(
+            -1,
+            "study, out_trials, or out_len pointer is null".to_string(),
+        );
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
@@ -1726,7 +1849,10 @@ pub extern "C" fn rustuna_study_get_trials_filtered(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_get_trials_filtered: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_study_get_trials_filtered: {e:?}"),
+            );
             -99
         }
     }
@@ -1813,9 +1939,9 @@ pub extern "C" fn rustuna_study_add_trial_json(
             }
         }
         for (k, v) in &payload.params {
-            distributions.entry(k.clone()).or_insert_with(|| {
-                Distribution::new_float(*v, *v, None, false)
-            });
+            distributions
+                .entry(k.clone())
+                .or_insert_with(|| Distribution::new_float(*v, *v, None, false));
         }
 
         let mut attrs = rustuna_core::attr::Attrs::new();
