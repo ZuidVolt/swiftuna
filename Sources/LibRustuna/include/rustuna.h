@@ -81,6 +81,9 @@ void rustuna_trial_free(RustunaTrial* trial);
 int32_t rustuna_persisted_trial_get_json(const RustunaPersistedTrial* trial, char** out_json);
 void rustuna_persisted_trial_free(RustunaPersistedTrial* trial);
 
+// In-process benchmark (no subprocess fork)
+int32_t rustuna_bench_e2e(size_t n_trials, uint64_t seed, bool use_random_sampler, uint64_t* out_ns_per_trial);
+
 #ifdef __cplusplus
 }
 #endif

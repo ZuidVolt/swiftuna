@@ -7,6 +7,8 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, RwLock};
 
+use std::time::Instant;
+
 use rustuna_core::distribution::Distribution;
 use rustuna_core::sampler::{RandomSampler, Sampler};
 use rustuna_core::storage::{InMemoryStorage, Storage};
@@ -1979,6 +1981,65 @@ pub extern "C" fn rustuna_study_add_trial_json(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_study_add_trial_json: {e:?}"));
+            -99
+        }
+    }
+}
+
+// MARK: - In-process microbenchmarks (no subprocess fork)
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_bench_e2e(
+    n_trials: usize,
+    seed: u64,
+    use_random_sampler: bool,
+    out_ns_per_trial: *mut u64,
+) -> i32 {
+    if out_ns_per_trial.is_null() || n_trials == 0 {
+        set_last_error(-1, "out_ns_per_trial is null or n_trials==0".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let sampler: Arc<dyn Sampler> = if use_random_sampler {
+            Arc::new(RandomSampler::seed_from_u64(seed))
+        } else {
+            Arc::new(TpeSampler::seed_from_u64(seed))
+        };
+        let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
+        let study = match create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]) {
+            Ok(s) => s,
+            Err(e) => return set_rustuna_error(&e),
+        };
+        let dist_x = Distribution::new_float(-10.0, 10.0, None, false);
+        let dist_y = Distribution::new_float(-10.0, 10.0, None, false);
+        let start = Instant::now();
+        for _ in 0..n_trials {
+            let mut trial = match study.ask() {
+                Ok(t) => t,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            let x = match trial.suggest("x", &dist_x) {
+                Ok(v) => v,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            let y = match trial.suggest("y", &dist_y) {
+                Ok(v) => v,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            let loss = (x - 2.0).powi(2) + (y + 5.0).powi(2);
+            if let Err(e) = study.tell(trial.number, TrialStateValues::Complete(vec![loss])) {
+                return set_rustuna_error(&e);
+            }
+        }
+        let elapsed = start.elapsed();
+        let ns_per_trial = elapsed.as_nanos() / (n_trials as u128);
+        unsafe { *out_ns_per_trial = ns_per_trial as u64 };
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_bench_e2e: {e:?}"));
             -99
         }
     }

@@ -7,7 +7,7 @@ build-ffi:
 
 build-ffi-release:
     RUSTFLAGS="-C target-cpu=native -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
-    strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
+    # strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
 
 build: build-ffi
     bash -c 'set -o pipefail; swift build 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
@@ -53,13 +53,3 @@ docs-build: build-ffi
 docs-preview port="8080": build-ffi
     -kill -9 $$(lsof -ti :{{ port }}) 2>/dev/null || true
     swift package --disable-sandbox preview-documentation --target Swiftuna --port {{ port }}
-
-# Serve the static ./docs build locally with /swiftuna route emulation
-docs-serve:
-    python3 scripts/serve_docs.py
-
-# Short aliases
-doc: docs-build
-doc-preview: docs-preview
-doc-serve: docs-serve
-
