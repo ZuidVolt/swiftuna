@@ -2,10 +2,6 @@
 
 Create studies, define search spaces, optimize objective functions, and analyze trial results.
 
-## Overview
-
-Swiftuna provides Swift 6 bindings for Rustuna's embedded optimization engine. It links directly to `librustuna_ffi` through a C ABI bridge with zero heap copies, running 1,000 trials in 97 to 104 ms.
-
 ### Installation
 
 Add Swiftuna to your `Package.swift` dependencies:
