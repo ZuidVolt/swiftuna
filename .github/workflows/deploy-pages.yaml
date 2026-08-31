@@ -3,7 +3,7 @@ name: deploy-pages
 
 on:
   workflow_run:
-    workflows: ["update-linux-binaries"]
+    workflows: ["ci"]
     branches: [main]
     types:
       - completed
@@ -11,22 +11,15 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    # Only run if manual trigger or if the upstream CI run succeeded
+  build:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-24.04 # Swift 6.3 is pre-installed out of the box
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,6 +28,17 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libsqlite3-dev
+
+      - name: Cache SwiftPM dependencies and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/.cache/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved') }}-
+            ${{ runner.os }}-swiftpm-
 
       - name: Generate DocC documentation
         run: |
@@ -51,6 +55,16 @@ jobs:
         with:
           path: ./docs
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
