@@ -9,6 +9,8 @@ let rustLibDir = "crates/rustuna-ffi/target/\(rustConfig)"
 let linkerSettings: [LinkerSetting] = [
     .unsafeFlags(["-L\(rustLibDir)", "-lrustuna_ffi"])
 ]
+// For Linux with system sqlite: build with --features sqlite-system and link -lsqlite3
+// let linuxLinkerSettings: [LinkerSetting] = [.linkedLibrary("sqlite3"), .unsafeFlags(["-L\(rustLibDir)", "-lrustuna_ffi"])]
 
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),

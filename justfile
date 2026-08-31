@@ -5,9 +5,18 @@ BUILD_DIR := ".build/arm64-apple-macosx"
 build-ffi:
     cargo build --manifest-path crates/rustuna-ffi/Cargo.toml
 
+# macOS M-series (arm64): apple-m1 covers M1..M4 family; Linux: generic (portable x86_64/aarch64)
 build-ffi-release:
-    RUSTFLAGS="-C target-cpu=native -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
-    # strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
+    RUSTFLAGS="-C target-cpu=apple-m1 -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
+    strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
+
+build-ffi-release-linux:
+    RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target x86_64-unknown-linux-gnu
+    strip -x crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a
+
+build-ffi-release-linux-system-sqlite:
+    RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target x86_64-unknown-linux-gnu --no-default-features --features sqlite-system
+    strip -x crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a
 
 build: build-ffi
     bash -c 'set -o pipefail; swift build 2>&1 | awk "/Failed frontend command:/{skip=1; next} /error: Build failed/{skip=0} !skip"'
