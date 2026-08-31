@@ -98,19 +98,28 @@ public struct PersistedTrial: Sendable {
         self.datetimeComplete = datetimeComplete
     }
 
+    /// Accesses a strongly-typed user attribute value using an ``AttributeKey``.
     public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {
         guard let str = userAttrs[K.name] else { return nil }
         return K.Value.fromAttributeString(str)
     }
 
+    /// Accesses a constraint evaluation value using a ``ConstraintKey``.
     public subscript<K: ConstraintKey>(_ key: K.Type) -> Double? {
         constraints[K.name]
     }
 
+    /// Accesses a raw string user attribute by string name.
     public subscript(_ key: String) -> String? {
         userAttrs[key]
     }
 
+    /// Deserializes a user attribute to a specific ``AttributeConvertible`` type by string name.
+    ///
+    /// - Parameters:
+    ///   - type: The target type to convert to.
+    ///   - key: The attribute key string.
+    /// - Returns: Deserialized value, or `nil` if missing or decoding failed.
     public func userAttr<T: AttributeConvertible>(as type: T.Type, key: String) -> T? {
         guard let str = userAttrs[key] else { return nil }
         return T.fromAttributeString(str)
@@ -120,25 +129,30 @@ public struct PersistedTrial: Sendable {
 // MARK: - Sequence Analytics Extensions (Optuna Calibration Parity)
 
 extension Sequence where Element == PersistedTrial {
+    /// Filters trials to only those with ``TrialState/complete`` state and valid objective value(s).
     public func completed() -> [PersistedTrial] {
         filter { $0.state == .complete && $0.value != nil }
     }
 
+    /// Filters trials to only those with ``TrialState/pruned`` state.
     public func pruned() -> [PersistedTrial] {
         filter { $0.state == .pruned }
     }
 
-    /// Filters trials to only those where all constraint values are <= 0.0.
+    /// Filters trials to only those where all constraint values are feasible ($v \le 0.0$).
     public func feasible() -> [PersistedTrial] {
         filter(\.isFeasible)
     }
 
-    /// Filters trials to only those where at least one constraint is violated (> 0.0).
+    /// Filters trials to only those where at least one constraint is violated ($v > 0.0$).
     public func infeasible() -> [PersistedTrial] {
         filter { !$0.isFeasible }
     }
 
-    /// Returns the optimal completed and feasible trial, or nil if no completed trial is feasible.
+    /// Returns the optimal completed and feasible trial according to `direction`, or `nil` if none exist.
+    ///
+    /// - Parameter direction: The optimization direction (defaults to ``Direction/minimize``).
+    /// - Returns: The best feasible completed trial.
     public func bestFeasible(direction: Direction = .minimize) -> PersistedTrial? {
         feasible().completed().min { a, b in
             guard let valA = a.value, let valB = b.value else { return false }
@@ -146,16 +160,25 @@ extension Sequence where Element == PersistedTrial {
         }
     }
 
+    /// Sorts trials by primary objective value.
+    ///
+    /// - Parameter ascending: If `true` (default), sorts lowest to highest; if `false`, highest to lowest.
     public func sortedByValue(ascending: Bool = true) -> [PersistedTrial] {
         self.filter { $0.value != nil }.sorted {
             ascending ? ($0.value! < $1.value!) : ($0.value! > $1.value!)
         }
     }
 
+    /// Returns the top `n` trials sorted by objective value.
+    ///
+    /// - Parameters:
+    ///   - n: Number of trials to return.
+    ///   - ascending: If `true` (default), lowest values first; if `false`, highest values first.
     public func top(_ n: Int, ascending: Bool = true) -> [PersistedTrial] {
         Array(sortedByValue(ascending: ascending).prefix(n))
     }
 
+    /// Filters trials whose primary objective value falls within `tolerance` of `baselineValue`.
     public func within(tolerance: Double, of baselineValue: Double) -> [PersistedTrial] {
         filter {
             guard let val = $0.value else { return false }
@@ -163,10 +186,17 @@ extension Sequence where Element == PersistedTrial {
         }
     }
 
+    /// Extracts all values recorded for a specific parameter across this sequence of trials.
+    ///
+    /// - Parameter paramName: Name of the hyperparameter.
+    /// - Returns: Array of sampled numerical values.
     public func values(for paramName: String) -> [Double] {
         compactMap { $0.params[paramName] }
     }
 
+    /// Computes the empirical minimum and maximum bounds observed for each parameter across this sequence of trials.
+    ///
+    /// - Returns: Dictionary mapping parameter names to their observed `ClosedRange<Double>`.
     public func parameterIntervals() -> [String: ClosedRange<Double>] {
         var minValues: [String: Double] = [:]
         var maxValues: [String: Double] = [:]

@@ -1,23 +1,68 @@
 public import Foundation
 import LibRustuna
 
-/// Defines the underlying persistence storage engine for a Swiftuna study.
+/// Defines the persistence storage engine for Swiftuna studies.
+///
+/// Swiftuna supports three storage engines:
+/// - ``StorageBackend/inMemory``: Ephemeral, maximum performance, zero disk I/O.
+/// - ``StorageBackend/sqlite(path:)``: SQLite3 database file, 100% byte-compatible with Python Optuna and `optuna-dashboard`.
+/// - ``StorageBackend/journal(path:)``: Append-only lockless journal file optimized for massive concurrency.
+///
+/// ### Examples
+///
+/// Creating an in-memory study:
+/// ```swift
+/// let study = try Swiftuna.createStudy(storage: .inMemory)
+/// ```
+///
+/// Persisting to a SQLite database (inspectable via `optuna-dashboard sqlite:///experiments.db`):
+/// ```swift
+/// let storage = StorageBackend.sqlite(path: "experiments.db")
+/// let study = try Swiftuna.createStudy(
+///     name: "production_study",
+///     storage: storage,
+///     loadIfExists: true
+/// )
+/// ```
+///
+/// High-throughput concurrent logging using lockless journal storage:
+/// ```swift
+/// let storage = StorageBackend.journal(path: "hpc_cluster.log")
+/// let study = try Swiftuna.createStudy(name: "cluster_eval", storage: storage)
+/// ```
 public enum StorageBackend: Sendable, Equatable {
-    /// Pure volatile in-memory storage (fastest, zero disk I/O).
+    /// Pure volatile in-memory storage.
+    ///
+    /// Trials are stored in RAM within the Rustuna runtime. Provides zero disk I/O overhead
+    /// and fastest iteration speed for single-process jobs.
     case inMemory
 
-    /// SQLite3 database storage (100% byte-compatible with Python Optuna and `optuna-dashboard`).
+    /// SQLite3 database storage.
+    ///
+    /// Data is stored in a standard SQLite file schema identical to Python Optuna (`RDBStorage`).
+    /// You can visualize running studies in real-time by starting Optuna Dashboard:
+    /// ```bash
+    /// pip install optuna-dashboard
+    /// optuna-dashboard sqlite:///experiments.db
+    /// ```
     case sqlite(path: String)
 
     /// High-throughput lockless append-only journal storage.
+    ///
+    /// Recommended for distributed environments, NFS network filesystems, or thousands of concurrent workers
+    /// where SQLite database write-locks could introduce lock contention.
     case journal(path: String)
 
-    /// Convenience initializer using a `Foundation.URL` for SQLite.
+    /// Convenience initializer creating a SQLite storage backend from a `Foundation.URL`.
+    ///
+    /// - Parameter url: File URL pointing to the SQLite database file.
     public static func sqlite(url: URL) -> Self {
         .sqlite(path: url.path(percentEncoded: false))
     }
 
-    /// Convenience initializer using a `Foundation.URL` for Journal.
+    /// Convenience initializer creating a Journal storage backend from a `Foundation.URL`.
+    ///
+    /// - Parameter url: File URL pointing to the journal log file.
     public static func journal(url: URL) -> Self {
         .journal(path: url.path(percentEncoded: false))
     }
@@ -46,7 +91,18 @@ public enum StorageBackend: Sendable, Equatable {
 // MARK: - Storage Lifecycle Operations
 
 extension StorageBackend {
-    /// Returns all studies stored in this storage backend.
+    /// Retrieves metadata summaries for all studies present in this storage backend.
+    ///
+    /// - Returns: An array of ``StudySummary`` descriptors.
+    /// - Throws: ``SwiftunaError/storageError(_:)`` if reading from storage fails.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let storage = StorageBackend.sqlite(path: "experiments.db")
+    /// for summary in try storage.studies() {
+    ///     print("Study '\(summary.name)' has \(summary.trialCount) trials")
+    /// }
+    /// ```
     public func studies() throws(SwiftunaError) -> [StudySummary] {
         var jsonPtr: UnsafeMutablePointer<CChar>?
         let status = withOptionalCString(pathString) { cPath in
@@ -67,7 +123,11 @@ extension StorageBackend {
         return payloads.map { $0.toStudySummary() }
     }
 
-    /// Deletes a study from this storage backend by name.
+    /// Deletes a study and all of its associated trials and attributes from this storage backend.
+    ///
+    /// - Parameter name: Name identifier of the study to delete.
+    /// - Throws: ``SwiftunaError/studyNotFound(_:)`` if no study with `name` exists,
+    ///           or ``SwiftunaError/storageError(_:)`` on storage failure.
     public func deleteStudy(named name: String) throws(SwiftunaError) {
         let status = name.withCString { cName in
             withOptionalCString(pathString) { cPath in
@@ -79,7 +139,10 @@ extension StorageBackend {
         }
     }
 
-    /// Deletes a study using its summary reference.
+    /// Deletes a study using its ``StudySummary`` descriptor.
+    ///
+    /// - Parameter summary: The summary representation of the study to delete.
+    /// - Throws: ``SwiftunaError`` if deletion fails.
     public func deleteStudy(_ summary: StudySummary) throws(SwiftunaError) {
         try deleteStudy(named: summary.name)
     }

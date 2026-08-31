@@ -154,18 +154,28 @@ public struct NSGAIISampler: Sampler {
     }
 }
 
-/// A Quasi-Monte Carlo Sampler that generates low-discrepancy Sobol sequences.
+/// A Quasi-Monte Carlo (QMC) Sampler that generates low-discrepancy Sobol sequences.
 ///
 /// QMC systematically minimizes search space voids and clusters across continuous and
 /// categorical parameters using Antonov-Saleev Gray code and Joe-Kuo direction numbers
-/// up to 1,024 dimensions.
+/// up to 1,024 dimensions. It provides faster space-filling convergence than pure uniform random sampling.
+///
+/// ### Example
+/// ```swift
+/// let sampler = QMCSampler(seed: 42)
+/// let study = try Swiftuna.createStudy(
+///     name: "qmc_exploration",
+///     sampler: sampler
+/// )
+/// ```
 public struct QMCSampler: Sampler {
+    /// Optional seed for deterministic reproducibility and scrambling.
     public let seed: UInt64?
 
-    /// Creates a QMC sampler.
+    /// Creates a QMC Sobol sequence sampler.
     ///
     /// - Parameter seed: Optional seed for the fallback random sampler used when
-    ///   parameters fall outside the joint search space.
+    ///   parameters fall outside the joint search space or when scrambling is enabled.
     public init(seed: UInt64? = nil) {
         self.seed = seed
     }
@@ -175,40 +185,81 @@ public struct QMCSampler: Sampler {
     }
 }
 
-/// Exhaustive grid search sampler over a discrete or categorical parameter grid.
+/// Exhaustive grid search sampler over a discrete, integer, or categorical parameter grid.
 ///
 /// Precomputes the Cartesian product of all provided parameter domains and evaluates each
 /// combination without replacement. When an optional seed is provided, the evaluation order
 /// of the grid points is shuffled deterministically.
+///
+/// If an optimization loop attempts to evaluate more trials than the total number of grid combinations,
+/// ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` will terminate early, and manual ``Study/ask()``
+/// will throw ``SwiftunaError/searchSpaceExhausted(_:)``.
+///
+/// ### Example
+/// ```swift
+/// let searchSpace: [String: GridSampler.ValueList] = [
+///     "learning_rate": [0.001, 0.01, 0.1],
+///     "batch_size": [16, 32, 64],
+///     "optimizer": .init(categorical: ["adam", "sgd"])
+/// ]
+///
+/// let sampler = GridSampler(searchSpace: searchSpace, seed: 123)
+/// let study = try Swiftuna.createStudy(sampler: sampler)
+/// try study.optimize(nTrials: 18) { trial in
+///     let lr = try trial.suggest("learning_rate", in: 0.001...0.1)
+///     let batch = try trial.suggest("batch_size", in: 16...64)
+///     let opt = try trial.suggest("optimizer", from: ["adam", "sgd"])
+///     return trainModel(lr: lr, batch: batch, opt: opt)
+/// }
+/// ```
 public struct GridSampler: Sampler {
+    /// Helper structure to define discrete parameter domains for grid search.
     public struct ValueList: ExpressibleByArrayLiteral, Sendable {
+        /// Numerical representations of the parameter options.
         public let values: [Double]
 
+        /// Creates a parameter grid domain from a floating-point array literal.
         public init(arrayLiteral elements: Double...) {
             self.values = elements
         }
 
+        /// Creates a parameter grid domain from an array of `Double` values.
         public init(_ elements: [Double]) {
             self.values = elements
         }
 
+        /// Creates a parameter grid domain from an array of `Int` values.
         public init(_ elements: [Int]) {
             self.values = elements.map(Double.init)
         }
 
+        /// Creates a parameter grid domain from an array of categorical `String` choices.
         public init(categorical: [String]) {
             self.values = (0..<categorical.count).map(Double.init)
         }
     }
 
+    /// The discrete parameter domains forming the grid Cartesian product.
     public let searchSpace: [String: [Double]]
+
+    /// Optional seed for deterministic shuffling of the grid evaluation sequence.
     public let seed: UInt64?
 
+    /// Initializes a GridSampler with typed ``ValueList`` domains.
+    ///
+    /// - Parameters:
+    ///   - searchSpace: Dictionary mapping parameter names to their list of valid discrete values.
+    ///   - seed: Optional seed for deterministic shuffling.
     public init(searchSpace: [String: ValueList], seed: UInt64? = nil) {
         self.searchSpace = searchSpace.mapValues { $0.values }
         self.seed = seed
     }
 
+    /// Initializes a GridSampler with raw `[Double]` domains.
+    ///
+    /// - Parameters:
+    ///   - searchSpace: Dictionary mapping parameter names to their list of floating-point values.
+    ///   - seed: Optional seed for deterministic shuffling.
     public init(searchSpace: [String: [Double]], seed: UInt64? = nil) {
         self.searchSpace = searchSpace
         self.seed = seed
