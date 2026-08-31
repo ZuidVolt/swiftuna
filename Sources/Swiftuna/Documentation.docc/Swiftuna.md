@@ -1,6 +1,6 @@
 # ``Swiftuna``
 
-Ultra-fast, native Swift 6 hyperparameter optimization powered by Optuna's core algorithms.
+Idomatic swift 6 bindings for subset of rustuna / optuna apis
 
 ## Overview
 
