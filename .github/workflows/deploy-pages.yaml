@@ -40,8 +40,16 @@ jobs:
             ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved') }}-
             ${{ runner.os }}-swiftpm-
 
-      - name: Generate DocC documentation
+      - name: Checkout DocC web renderer
         run: |
+          rm -rf /tmp/docc-render
+          git clone --depth 1 https://github.com/apple/swift-docc-render-artifact.git /tmp/docc-render
+
+      - name: Generate DocC documentation
+        env:
+          DOCC_HTML_DIR: /tmp/docc-render
+        run: |
+          rm -rf ./docs
           swift package \
             --allow-writing-to-directory ./docs \
             generate-documentation \
@@ -50,24 +58,36 @@ jobs:
             --transform-for-static-hosting \
             --hosting-base-path "${{ github.event.repository.name }}"
 
-      - name: Add root redirect to documentation
+      - name: Configure Pages routing & root redirect
         run: |
+          # 1. Prevent GitHub Pages from running Jekyll
+          touch ./docs/.nojekyll
+
+          # 2. Add SPA 404 fallback for direct URL routing
+          cp ./docs/index.html ./docs/404.html
+
+          # 3. Add client-side redirect at root
           cat << 'EOF' > ./docs/index.html
           <!DOCTYPE html>
           <html lang="en">
           <head>
             <meta charset="utf-8">
             <title>Redirecting to Swiftuna Documentation...</title>
-            <meta http-equiv="refresh" content="0; url=documentation/swiftuna">
+            <meta http-equiv="refresh" content="0; url=/swiftuna/documentation/swiftuna">
             <script>
-              window.location.replace("documentation/swiftuna");
+              window.location.replace("/swiftuna/documentation/swiftuna");
             </script>
           </head>
           <body>
-            <p>Redirecting to <a href="documentation/swiftuna">Swiftuna Documentation</a>...</p>
+            <p>Redirecting to <a href="/swiftuna/documentation/swiftuna">Swiftuna Documentation</a>...</p>
           </body>
           </html>
           EOF
+
+      - name: Verify asset output
+        run: |
+          ls -lh ./docs/js/
+          test -f ./docs/js/chunk-vendors.*.js || test -f ./docs/js/*.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
