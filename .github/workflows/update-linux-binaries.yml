@@ -65,7 +65,7 @@ jobs:
           ls -lh Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a
           file Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a || true
 
-      - name: build linux aarch64 (best-effort)
+      - name: build linux aarch64
         if: steps.check-hash.outputs.skip != 'true'
         continue-on-error: true
         run: |
