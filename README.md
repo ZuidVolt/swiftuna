@@ -6,7 +6,7 @@
 [![DocC](https://img.shields.io/badge/Documentation-DocC-brightgreen.svg)](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/)
 [![Optuna Compatible](https://img.shields.io/badge/Optuna%20Dashboard-Compatible-blueviolet.svg)](#optuna-dashboard-integration)
 
-Swiftuna provides Swift 6 bindings for [Rustuna](https://github.com/optuna/rustuna) (`rustuna_core`), the Rust rewrite of the engine behind Optuna. It links directly to `librustuna_ffi` through a C ABI bridge with zero heap copies, running 1,000 trials in 97 to 104 ms.
+Swiftuna provides Swift 6 bindings for [Rustuna](https://github.com/optuna/rustuna) (`rustuna_core`), the Rust rewrite of the engine behind Optuna.
 
 ---
 
