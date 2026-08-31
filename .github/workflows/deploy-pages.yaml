@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - "Sources/Swiftuna/**"
-      - ".github/workflows/deploy-pages.yaml"
+      - ".github/workflows/deploy-pages.yml"
       - "Package.swift"
   workflow_dispatch:
 
@@ -19,7 +19,6 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
