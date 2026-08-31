@@ -2006,10 +2006,11 @@ pub extern "C" fn rustuna_bench_e2e(
             Arc::new(TpeSampler::seed_from_u64(seed))
         };
         let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-        let study = match create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]) {
-            Ok(s) => s,
-            Err(e) => return set_rustuna_error(&e),
-        };
+        let study =
+            match create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]) {
+                Ok(s) => s,
+                Err(e) => return set_rustuna_error(&e),
+            };
         let dist_x = Distribution::new_float(-10.0, 10.0, None, false);
         let dist_y = Distribution::new_float(-10.0, 10.0, None, false);
         let start = Instant::now();

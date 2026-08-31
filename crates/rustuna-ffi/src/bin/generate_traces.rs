@@ -3,8 +3,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-
-
 use rustuna_core::distribution::Distribution;
 use rustuna_core::sampler::Sampler;
 use rustuna_core::storage::InMemoryStorage;
@@ -33,7 +31,8 @@ fn run_quadratic() -> ProblemCorpus {
     let seed = 42u64;
     let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::seed_from_u64(seed));
     let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-    let study = create_study_with_arc("quadratic", storage, sampler, vec![Direction::Minimize]).unwrap();
+    let study =
+        create_study_with_arc("quadratic", storage, sampler, vec![Direction::Minimize]).unwrap();
 
     let mut traces = Vec::new();
     let mut best_val = f64::MAX;
@@ -55,7 +54,9 @@ fn run_quadratic() -> ProblemCorpus {
         params.insert("x".to_string(), x);
         params.insert("y".to_string(), y);
 
-        study.tell(num, TrialStateValues::Complete(vec![loss])).unwrap();
+        study
+            .tell(num, TrialStateValues::Complete(vec![loss]))
+            .unwrap();
 
         if loss < best_val {
             best_val = loss;
@@ -82,7 +83,13 @@ fn run_constrained_weights() -> ProblemCorpus {
     let seed = 42u64;
     let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::seed_from_u64(seed));
     let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-    let study = create_study_with_arc("constrained_weights", storage, sampler, vec![Direction::Minimize]).unwrap();
+    let study = create_study_with_arc(
+        "constrained_weights",
+        storage,
+        sampler,
+        vec![Direction::Minimize],
+    )
+    .unwrap();
 
     let mut traces = Vec::new();
     let mut best_val = f64::MAX;
@@ -112,7 +119,9 @@ fn run_constrained_weights() -> ProblemCorpus {
         params.insert("mutation_weight".to_string(), m_w);
         params.insert("sink_weight".to_string(), s_w);
 
-        study.tell(num, TrialStateValues::Complete(vec![loss])).unwrap();
+        study
+            .tell(num, TrialStateValues::Complete(vec![loss]))
+            .unwrap();
 
         if loss < best_val {
             best_val = loss;
@@ -139,7 +148,8 @@ fn run_integer_grid() -> ProblemCorpus {
     let seed = 42u64;
     let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::seed_from_u64(seed));
     let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-    let study = create_study_with_arc("integer_grid", storage, sampler, vec![Direction::Minimize]).unwrap();
+    let study =
+        create_study_with_arc("integer_grid", storage, sampler, vec![Direction::Minimize]).unwrap();
 
     let mut traces = Vec::new();
     let mut best_val = f64::MAX;
@@ -161,7 +171,9 @@ fn run_integer_grid() -> ProblemCorpus {
         params.insert("n_layers".to_string(), layers);
         params.insert("hidden_units".to_string(), units);
 
-        study.tell(num, TrialStateValues::Complete(vec![loss])).unwrap();
+        study
+            .tell(num, TrialStateValues::Complete(vec![loss]))
+            .unwrap();
 
         if loss < best_val {
             best_val = loss;
@@ -188,7 +200,13 @@ fn run_categorical_grid() -> ProblemCorpus {
     let seed = 42u64;
     let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::seed_from_u64(seed));
     let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-    let study = create_study_with_arc("categorical_grid", storage, sampler, vec![Direction::Minimize]).unwrap();
+    let study = create_study_with_arc(
+        "categorical_grid",
+        storage,
+        sampler,
+        vec![Direction::Minimize],
+    )
+    .unwrap();
 
     let mut traces = Vec::new();
     let mut best_val = f64::MAX;
@@ -212,7 +230,9 @@ fn run_categorical_grid() -> ProblemCorpus {
         let mut params = HashMap::new();
         params.insert("optimizer".to_string(), idx);
 
-        study.tell(num, TrialStateValues::Complete(vec![loss])).unwrap();
+        study
+            .tell(num, TrialStateValues::Complete(vec![loss]))
+            .unwrap();
 
         if loss < best_val {
             best_val = loss;
@@ -247,22 +267,29 @@ fn main() {
     fs::write(
         out_dir.join("quadratic.json"),
         serde_json::to_string_pretty(&quad).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::write(
         out_dir.join("constrained_weights.json"),
         serde_json::to_string_pretty(&constr).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::write(
         out_dir.join("integer_grid.json"),
         serde_json::to_string_pretty(&int_grid).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::write(
         out_dir.join("categorical_grid.json"),
         serde_json::to_string_pretty(&cat_grid).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
-    println!("✅ Generated 4 golden parity corpus traces in {:?}", out_dir);
+    println!(
+        "✅ Generated 4 golden parity corpus traces in {:?}",
+        out_dir
+    );
 }

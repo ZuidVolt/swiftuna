@@ -14,7 +14,8 @@ fn main() {
 
     let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::seed_from_u64(42));
     let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-    let study = create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]).unwrap();
+    let study =
+        create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]).unwrap();
 
     let dist_x = Distribution::new_float(-10.0, 10.0, None, false);
     let dist_y = Distribution::new_float(-10.0, 10.0, None, false);
@@ -26,7 +27,9 @@ fn main() {
         let x = trial.suggest("x", &dist_x).unwrap();
         let y = trial.suggest("y", &dist_y).unwrap();
         let loss = (x - 2.0).powi(2) + (y + 5.0).powi(2);
-        study.tell(trial.number, TrialStateValues::Complete(vec![loss])).unwrap();
+        study
+            .tell(trial.number, TrialStateValues::Complete(vec![loss]))
+            .unwrap();
     }
 
     let elapsed = start.elapsed();
@@ -34,5 +37,8 @@ fn main() {
     let us_per_trial = (elapsed.as_secs_f64() * 1_000_000.0) / (n_trials as f64);
     let throughput = (n_trials as f64) / elapsed.as_secs_f64();
 
-    println!("RESULT:{:.3}:{:.2}:{:.0}", total_ms, us_per_trial, throughput);
+    println!(
+        "RESULT:{:.3}:{:.2}:{:.0}",
+        total_ms, us_per_trial, throughput
+    );
 }
