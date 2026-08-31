@@ -2,11 +2,12 @@
 name: deploy-pages
 
 on:
-  workflow_run:
-    workflows: ["ci"]
+  push:
     branches: [main]
-    types:
-      - completed
+    paths:
+      - "Sources/Swiftuna/**"
+      - ".github/workflows/deploy-pages.yaml"
+      - "Package.swift"
   workflow_dispatch:
 
 permissions:
@@ -49,6 +50,25 @@ jobs:
             --output-path ./docs \
             --transform-for-static-hosting \
             --hosting-base-path "${{ github.event.repository.name }}"
+
+      - name: Add root redirect to documentation
+        run: |
+          cat << 'EOF' > ./docs/index.html
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Redirecting to Swiftuna Documentation...</title>
+            <meta http-equiv="refresh" content="0; url=documentation/swiftuna">
+            <script>
+              window.location.replace("documentation/swiftuna");
+            </script>
+          </head>
+          <body>
+            <p>Redirecting to <a href="documentation/swiftuna">Swiftuna Documentation</a>...</p>
+          </body>
+          </html>
+          EOF
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
