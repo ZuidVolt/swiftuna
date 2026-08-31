@@ -73,24 +73,28 @@ let package = Package(
         .executableTarget(
             name: "SwiftunaMigrator",
             dependencies: ["Swiftuna"],
+            path: "Tools/SwiftunaMigrator",
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "SwiftunaParity",
             dependencies: ["Swiftuna"],
+            path: "Tools/SwiftunaParity",
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "SwiftunaBench",
             dependencies: ["Swiftuna"],
+            path: "Tools/SwiftunaBench",
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "Experimentation",
             dependencies: ["Swiftuna"],
+            path: "Tools/Experimentation",
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),

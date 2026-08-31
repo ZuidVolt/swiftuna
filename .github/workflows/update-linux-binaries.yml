@@ -27,9 +27,14 @@ jobs:
           fetch-depth: 1
 
       - name: shallow clone ref/rustuna
+        env:
+          RUSTUNA_COMMIT: 8acb2dd1c9efefe23b7ea369614e081871aaa4f9
         run: |
           rm -rf ref/rustuna
-          git clone --depth 1 --single-branch https://github.com/optuna/rustuna.git ref/rustuna
+          git init ref/rustuna
+          git -C ref/rustuna remote add origin https://github.com/optuna/rustuna.git
+          git -C ref/rustuna fetch --depth 1 origin "$RUSTUNA_COMMIT"
+          git -C ref/rustuna checkout FETCH_HEAD
           ls ref/rustuna/rustuna_storage/Cargo.toml
 
       - name: check if rebuild needed (hash inputs)
