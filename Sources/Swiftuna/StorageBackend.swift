@@ -1,4 +1,5 @@
 public import Foundation
+import LibRustuna
 
 /// Defines the underlying persistence storage engine for a Swiftuna study.
 public enum StorageBackend: Sendable, Equatable {
@@ -44,8 +45,6 @@ public enum StorageBackend: Sendable, Equatable {
 
 // MARK: - Storage Lifecycle Operations
 
-import LibRustuna
-
 extension StorageBackend {
     /// Returns all studies stored in this storage backend.
     public func studies() throws(SwiftunaError) -> [StudySummary] {
@@ -61,7 +60,8 @@ extension StorageBackend {
 
         let jsonStr = String(cString: jsonPtr)
         guard let data = jsonStr.data(using: .utf8),
-              let payloads = try? JSONDecoder().decode([StudySummaryPayload].self, from: data) else {
+            let payloads = try? JSONDecoder().decode([StudySummaryPayload].self, from: data)
+        else {
             throw SwiftunaError.storageError("Failed to decode study summaries JSON payload")
         }
         return payloads.map { $0.toStudySummary() }

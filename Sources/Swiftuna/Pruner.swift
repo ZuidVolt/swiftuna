@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Protocol for deciding whether an active trial should be early-stopped based on intermediate values.
 public protocol Pruner: Sendable {
@@ -137,7 +138,9 @@ public struct PercentilePruner: Pruner {
         }
 
         let allTrials = try study.trials
-        let previousTrials = allTrials.filter { $0.number < trialNumber && ($0.state == .complete || $0.state == .pruned) }
+        let previousTrials = allTrials.filter {
+            $0.number < trialNumber && ($0.state == .complete || $0.state == .pruned)
+        }
 
         if previousTrials.count < nStartupTrials {
             return false
@@ -296,13 +299,14 @@ public struct SuccessiveHalvingPruner: Pruner {
         }
 
         let valuesAtRung = completedOrPruned.compactMap { $0.intermediateValues[step] }
-        guard valuesAtRung.count >= bootstrapCount && !valuesAtRung.isEmpty else {
+        guard valuesAtRung.count >= bootstrapCount, !valuesAtRung.isEmpty else {
             return false
         }
 
         let numPromoted = max(1, valuesAtRung.count / reductionFactor)
 
-        let sortedValues = study.direction == .minimize
+        let sortedValues =
+            study.direction == .minimize
             ? valuesAtRung.sorted(by: <)
             : valuesAtRung.sorted(by: >)
 
@@ -310,9 +314,8 @@ public struct SuccessiveHalvingPruner: Pruner {
 
         if study.direction == .minimize {
             return currentValue > cutoffThreshold
-        } else {
-            return currentValue < cutoffThreshold
         }
+        return currentValue < cutoffThreshold
     }
 }
 
@@ -387,9 +390,8 @@ public struct HyperbandPruner: Pruner {
                     minResource: minRBracket,
                     reductionFactor: eta,
                     minEarlyStoppingRate: s,
-                    bootstrapCount: bootstrapCount,
-                    trialFilter: { $0.number % totalBrackets == s }
-                )
+                    bootstrapCount: bootstrapCount
+                ) { $0.number % totalBrackets == s }
             )
         }
         self.pruners = bracketPruners
@@ -416,8 +418,6 @@ public struct HyperbandPruner: Pruner {
         )
     }
 }
-
-import Synchronization
 
 /// Pruner that wraps another pruner to provide a patience grace period, or acts as a standalone
 /// early-stopping monitor based on stagnation.
@@ -446,7 +446,7 @@ public struct PatientPruner: Pruner {
 
     private struct TrialState: Sendable {
         var consecutivePruneVotes: Int = 0
-        var bestValue: Double? = nil
+        var bestValue: Double?
         var consecutiveUnimproved: Int = 0
     }
 
@@ -491,11 +491,10 @@ public struct PatientPruner: Pruner {
                     state.consecutivePruneVotes += 1
                     states[trialNumber] = state
                     return state.consecutivePruneVotes > patience
-                } else {
-                    state.consecutivePruneVotes = 0
-                    states[trialNumber] = state
-                    return false
                 }
+                state.consecutivePruneVotes = 0
+                states[trialNumber] = state
+                return false
             }
         }
 
@@ -521,11 +520,10 @@ public struct PatientPruner: Pruner {
                 state.consecutiveUnimproved = 0
                 states[trialNumber] = state
                 return false
-            } else {
-                state.consecutiveUnimproved += 1
-                states[trialNumber] = state
-                return state.consecutiveUnimproved > patience
             }
+            state.consecutiveUnimproved += 1
+            states[trialNumber] = state
+            return state.consecutiveUnimproved > patience
         }
     }
 }

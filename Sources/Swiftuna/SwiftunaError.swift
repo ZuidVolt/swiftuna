@@ -1,5 +1,4 @@
 import Foundation
-
 internal import LibRustuna
 
 public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {

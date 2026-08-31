@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 #if canImport(os)
     import os
@@ -66,8 +67,6 @@ public struct NoOpTelemetryTracer: TelemetryTracer {
         NoOpTelemetrySpan()
     }
 }
-
-import Synchronization
 
 #if canImport(os)
     import os

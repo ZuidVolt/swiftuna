@@ -216,12 +216,13 @@ public struct GridSampler: Sampler {
 
     public func makeRawHandle() -> OpaquePointer? {
         guard let data = try? JSONSerialization.data(withJSONObject: searchSpace, options: []),
-              let jsonStr = String(data: data, encoding: .utf8) else {
+            let jsonStr = String(data: data, encoding: .utf8)
+        else {
             return nil
         }
 
         return jsonStr.withCString { cStr in
-            var raw: OpaquePointer? = nil
+            var raw: OpaquePointer?
             let code = rustuna_sampler_grid_new(cStr, seed ?? 0, seed != nil, &raw)
             return code == 0 ? raw : nil
         }
