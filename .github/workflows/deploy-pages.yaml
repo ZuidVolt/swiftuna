@@ -46,11 +46,17 @@ jobs:
           git clone --depth 1 https://github.com/apple/swift-docc-render-artifact.git /tmp/docc-render
 
       - name: Generate DocC documentation
-        env:
-          DOCC_HTML_DIR: /tmp/docc-render
         run: |
+          # Resolve the template directory containing index.html
+          if [ -d "/tmp/docc-render/dist" ]; then
+            TEMPLATE_DIR="/tmp/docc-render/dist"
+          else
+            TEMPLATE_DIR=$(dirname $(find /tmp/docc-render -name "index.html" | head -n 1))
+          fi
+          echo "Using DocC template at: $TEMPLATE_DIR"
+
           rm -rf ./docs
-          swift package \
+          DOCC_HTML_DIR="$TEMPLATE_DIR" swift package \
             --allow-writing-to-directory ./docs \
             generate-documentation \
             --target Swiftuna \
@@ -60,13 +66,13 @@ jobs:
 
       - name: Configure Pages routing & root redirect
         run: |
-          # 1. Prevent GitHub Pages from running Jekyll
+          # 1. Prevent GitHub Pages from executing Jekyll
           touch ./docs/.nojekyll
 
-          # 2. Add SPA 404 fallback for direct URL routing
+          # 2. Preserve DocC SPA template as 404 fallback for direct URL routing
           cp ./docs/index.html ./docs/404.html
 
-          # 3. Add client-side redirect at root
+          # 3. Create root redirect to documentation
           cat << 'EOF' > ./docs/index.html
           <!DOCTYPE html>
           <html lang="en">
@@ -86,8 +92,10 @@ jobs:
 
       - name: Verify asset output
         run: |
-          ls -lh ./docs/js/
-          test -f ./docs/js/chunk-vendors.*.js || test -f ./docs/js/*.js
+          echo "=== Root contents ==="
+          ls -la ./docs/
+          echo "=== JavaScript bundles ==="
+          ls -la ./docs/js/./docs/js/*.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
