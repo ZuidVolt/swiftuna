@@ -3,7 +3,7 @@
 import PackageDescription
 
 // Vendored Rust staticlibs — checked in via Tools/package-binaries.py
-// Always release build (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
+// Always release binary (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
 let vendoredMacDir = "Sources/LibRustuna/artifacts/macos-arm64"
 #if arch(x86_64)
     let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-x86_64"
