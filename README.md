@@ -36,7 +36,7 @@ let package = Package(
     name: "MyOptimizer",
     platforms: [.macOS(.v13), .iOS(.v16)],
     dependencies: [
-        .package(url: "https://github.com/ZuidVolt/swiftuna.git", from: "0.1.0")
+        .package(url: "https://github.com/ZuidVolt/swiftuna.git", from: "main")
     ],
     targets: [
         .executableTarget(
