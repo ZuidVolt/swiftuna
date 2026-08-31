@@ -19,3 +19,4 @@ crates/rustuna-ffi/target/
 docs/
 __pycache__/
 .DS_Store
+tmp_mlx_demo/
