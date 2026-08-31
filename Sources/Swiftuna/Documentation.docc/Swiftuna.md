@@ -4,7 +4,7 @@ Idomatic swift 6 bindings for subset of rustuna / optuna apis
 
 ## Overview
 
-**Swiftuna** brings production-grade Bayesian hyperparameter optimization (HPO) directly to the Swift ecosystem. It embeds Rustuna (`rustuna_core`) with zero runtime overhead over a C ABI bridge, delivering pure native Swift ergonomics and 97-104 ms latency per 1,000 trials—matching or exceeding pure Rust performance.
+**Swiftuna** brings production-grade Bayesian hyperparameter optimization (HPO) directly to the Swift ecosystem. It embeds Rustuna (`rustuna_core`) with as little overhead as possible using a C ABI bridge, delivering pure native Swift ergonomics and 97-104 ms latency per 1,000 trials—matching or exceeding pure Rust performance.
 
 ### Quickstart
 
