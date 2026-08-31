@@ -50,6 +50,7 @@ internal struct OptimizationBudget: Sendable {
 /// ```
 public final class Study: @unchecked Sendable {
     private var raw: OpaquePointer?
+    package var rawHandle: OpaquePointer? { raw }
     public let name: String
     public let directions: [Direction]
     public let pruner: any Pruner

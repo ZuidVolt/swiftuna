@@ -1,7 +1,7 @@
 public import Foundation
 
 /// Lifecycle state of an optimization trial.
-public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
+public enum TrialState: Int32, Sendable, CaseIterable, Hashable, Codable {
     /// The trial is actively being evaluated by an objective function.
     case running = 0
 
@@ -31,7 +31,7 @@ public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
 ///     print("Learning rate: \(best.params["lr"]?.asDouble ?? 0.0)")
 /// }
 /// ```
-public struct PersistedTrial: Sendable {
+public struct PersistedTrial: Sendable, Codable {
     /// Zero-based sequential trial index within the study.
     public let number: Int
 

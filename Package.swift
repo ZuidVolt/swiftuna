@@ -41,6 +41,10 @@ let package = Package(
             name: "Swiftuna",
             targets: ["Swiftuna"]
         ),
+        .library(
+            name: "SwiftunaDistributed",
+            targets: ["SwiftunaDistributed"]
+        ),
         .executable(
             name: "SwiftunaMigrator",
             targets: ["SwiftunaMigrator"]
@@ -102,6 +106,18 @@ let package = Package(
         .testTarget(
             name: "SwiftunaTests",
             dependencies: ["Swiftuna", .product(name: "PropertyBased", package: "swift-property-based")],
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
+        ),
+        .target(
+            name: "SwiftunaDistributed",
+            dependencies: ["Swiftuna"],
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
+        ),
+        .testTarget(
+            name: "SwiftunaDistributedTests",
+            dependencies: ["SwiftunaDistributed", "Swiftuna"],
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),

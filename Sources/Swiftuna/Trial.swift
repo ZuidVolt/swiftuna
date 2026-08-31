@@ -47,7 +47,7 @@ public struct Trial: ~Copyable {
         }
     }
 
-    internal mutating func takeHandle() -> OpaquePointer? {
+    package mutating func takeHandle() -> OpaquePointer? {
         let h = raw
         raw = nil
         return h
@@ -519,7 +519,7 @@ public struct Trial: ~Copyable {
     }
 }
 
-fileprivate func withCStrings<R>(
+private func withCStrings<R>(
     _ strings: [String],
     _ body: (UnsafeBufferPointer<UnsafePointer<CChar>?>) throws -> R
 ) rethrows -> R {
