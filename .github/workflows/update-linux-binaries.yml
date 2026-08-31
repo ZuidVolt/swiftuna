@@ -47,6 +47,21 @@ jobs:
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: install build and cross-compile toolchains
+        if: steps.check-hash.outputs.skip != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            pkg-config \
+            libsqlite3-dev \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            binutils-aarch64-linux-gnu \
+            clang \
+            libclang-dev
+
       - name: rust toolchain
         if: steps.check-hash.outputs.skip != 'true'
         uses: dtolnay/rust-toolchain@stable
@@ -58,13 +73,15 @@ jobs:
         with:
           workspaces: crates/rustuna-ffi -> target
           cache-all-crates: "true"
+          cache-targets: "true"
 
       - name: build linux x86_64
         if: steps.check-hash.outputs.skip != 'true'
+        env:
+          RUSTFLAGS: "-C target-cpu=generic -C embed-bitcode=no"
+          CC_x86_64_unknown_linux_gnu: gcc
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pkg-config libsqlite3-dev
-          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target x86_64-unknown-linux-gnu
+          cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target x86_64-unknown-linux-gnu
           strip --strip-unneeded crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a || strip crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a || true
           mkdir -p Sources/LibRustuna/artifacts/linux-x86_64
           cp crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a
@@ -73,22 +90,19 @@ jobs:
 
       - name: build linux aarch64
         if: steps.check-hash.outputs.skip != 'true'
-        continue-on-error: true
+        env:
+          RUSTFLAGS: "-C target-cpu=generic -C embed-bitcode=no"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: "--sysroot=/usr/aarch64-linux-gnu"
         run: |
-          sudo apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross || true
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
-          CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
-          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no -C linker=aarch64-linux-gnu-gcc" \
-            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu --verbose || \
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          CC=aarch64-linux-gnu-gcc \
-          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" \
-            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu
+          cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu
           aarch64-linux-gnu-strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a 2>/dev/null || strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a || true
           mkdir -p Sources/LibRustuna/artifacts/linux-aarch64
-          cp crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || echo "aarch64 not built"
-          ls -lh Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || true
+          cp crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a
+          ls -lh Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a
           file Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || true
 
       - name: generate manifest
