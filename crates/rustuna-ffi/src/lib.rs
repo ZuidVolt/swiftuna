@@ -1160,6 +1160,26 @@ pub extern "C" fn rustuna_trial_free(trial: *mut RustunaTrial) {
 
 pub struct RustunaPersistedTrial {
     pub inner: PersistedTrial,
+    pub category_labels: HashMap<String, Vec<rustuna_core::attr::CategoryLabel>>,
+}
+
+fn make_persisted_trial(
+    storage: &mut dyn Storage,
+    study_id: u32,
+    trial: PersistedTrial,
+) -> RustunaPersistedTrial {
+    let mut category_labels = HashMap::new();
+    for (name, dist) in &trial.distributions {
+        if let Distribution::Categorical { cardinality } = dist {
+            if let Ok(Some(labels)) = storage.get_category_labels(study_id, name, *cardinality) {
+                category_labels.insert(name.clone(), labels);
+            }
+        }
+    }
+    RustunaPersistedTrial {
+        inner: trial,
+        category_labels,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1204,7 +1224,11 @@ pub extern "C" fn rustuna_study_get_best_trial(
         };
 
         unsafe {
-            *out_trial = Box::into_raw(Box::new(RustunaPersistedTrial { inner: trial }));
+            *out_trial = Box::into_raw(Box::new(make_persisted_trial(
+                &mut *guard,
+                s.inner.id,
+                trial,
+            )));
         }
         0
     }));
@@ -1246,7 +1270,7 @@ pub extern "C" fn rustuna_study_get_best_trials(
             }
         };
         let trials_vec = match guard.get_trials(s.inner.id) {
-            Ok(v) => v,
+            Ok(v) => v.clone(),
             Err(e) => return set_rustuna_error(&e),
         };
 
@@ -1254,9 +1278,11 @@ pub extern "C" fn rustuna_study_get_best_trials(
             Vec::with_capacity(pareto_front_numbers.len());
         for num in pareto_front_numbers {
             if let Some(Some(trial)) = trials_vec.get(num as usize) {
-                pt_ptrs.push(Box::into_raw(Box::new(RustunaPersistedTrial {
-                    inner: trial.clone(),
-                })));
+                pt_ptrs.push(Box::into_raw(Box::new(make_persisted_trial(
+                    &mut *guard,
+                    s.inner.id,
+                    trial.clone(),
+                ))));
             }
         }
 
@@ -1313,6 +1339,7 @@ struct PersistedTrialPayload<'a> {
     state: i32,
     values: &'a [f64],
     params: &'a HashMap<String, f64>,
+    param_values: HashMap<String, serde_json::Value>,
     user_attrs: HashMap<String, String>,
     constraints: HashMap<String, f64>,
     intermediate_values: HashMap<String, f64>,
@@ -1357,11 +1384,88 @@ pub extern "C" fn rustuna_persisted_trial_get_json(
             intermediate_values.insert(k.to_string(), *v);
         }
 
+        let mut param_values = HashMap::new();
+        for (name, val) in &t.inner.internal_params {
+            if let Some(dist) = t.inner.distributions.get(name) {
+                match dist {
+                    Distribution::Categorical { .. } => {
+                        let idx = *val as usize;
+                        if let Some(labels) = t.category_labels.get(name) {
+                            if let Some(label) = labels.get(idx) {
+                                match label {
+                                    rustuna_core::attr::CategoryLabel::String(s) => {
+                                        param_values.insert(
+                                            name.clone(),
+                                            serde_json::Value::String(s.clone()),
+                                        );
+                                        continue;
+                                    }
+                                    rustuna_core::attr::CategoryLabel::Int(i) => {
+                                        param_values.insert(
+                                            name.clone(),
+                                            serde_json::Value::Number((*i).into()),
+                                        );
+                                        continue;
+                                    }
+                                    rustuna_core::attr::CategoryLabel::Float(f) => {
+                                        if let Some(num) = serde_json::Number::from_f64(*f) {
+                                            param_values.insert(
+                                                name.clone(),
+                                                serde_json::Value::Number(num),
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                    rustuna_core::attr::CategoryLabel::Bool(b) => {
+                                        param_values
+                                            .insert(name.clone(), serde_json::Value::Bool(*b));
+                                        continue;
+                                    }
+                                    rustuna_core::attr::CategoryLabel::None => {
+                                        param_values.insert(name.clone(), serde_json::Value::Null);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        param_values.insert(
+                            name.clone(),
+                            serde_json::Number::from_f64(*val)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    Distribution::Int { .. } => {
+                        param_values.insert(
+                            name.clone(),
+                            serde_json::Value::Number((*val as i64).into()),
+                        );
+                    }
+                    Distribution::Float { .. } => {
+                        param_values.insert(
+                            name.clone(),
+                            serde_json::Number::from_f64(*val)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                }
+            } else {
+                param_values.insert(
+                    name.clone(),
+                    serde_json::Number::from_f64(*val)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
+                );
+            }
+        }
+
         let payload = PersistedTrialPayload {
             number: t.inner.number,
             state,
             values,
             params: &t.inner.internal_params,
+            param_values,
             user_attrs,
             constraints,
             intermediate_values,
@@ -1834,7 +1938,7 @@ pub extern "C" fn rustuna_study_get_trials_filtered(
                 };
                 (states_mask & state_bit) != 0
             })
-            .map(|t| Box::into_raw(Box::new(RustunaPersistedTrial { inner: t })))
+            .map(|t| Box::into_raw(Box::new(make_persisted_trial(&mut *guard, s.inner.id, t))))
             .collect();
 
         pt_ptrs.shrink_to_fit();

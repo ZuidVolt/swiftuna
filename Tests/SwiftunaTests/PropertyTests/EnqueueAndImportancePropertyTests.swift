@@ -104,8 +104,8 @@ struct EnqueueAndImportancePropertyTests {
             let p2Range = intervals["p2"]!
 
             for trial in mockTrials {
-                #expect(p1Range.contains(trial.params["p1"]!))
-                #expect(p2Range.contains(trial.params["p2"]!))
+                #expect(p1Range.contains(trial.params["p1"]!.asDouble!))
+                #expect(p2Range.contains(trial.params["p2"]!.asDouble!))
             }
 
             // Invariant 5: within(tolerance:of:) bounds

@@ -27,7 +27,8 @@ public enum TrialState: Int32, Sendable, CaseIterable, Hashable {
 /// ```swift
 /// if let best = try study.bestTrial {
 ///     print("Best Trial #\(best.number) achieved value \(best.value ?? 0.0)")
-///     print("Parameters: \(best.params)")
+///     print("Optimizer: \(best.params["optimizer"]?.asString ?? "none")")
+///     print("Learning rate: \(best.params["lr"]?.asDouble ?? 0.0)")
 /// }
 /// ```
 public struct PersistedTrial: Sendable {
@@ -43,8 +44,15 @@ public struct PersistedTrial: Sendable {
     /// Array of objective values matching the study's ``Study/directions``.
     public let values: [Double]
 
-    /// Dictionary of hyperparameter names and their evaluated numerical values.
-    public let params: [String: Double]
+    /// Dictionary of hyperparameter names and their strongly-typed evaluated values.
+    public let params: [String: ParameterValue]
+
+    private let _internalParams: [String: Double]?
+
+    /// Dictionary of hyperparameter names and their raw mathematical internal floats.
+    public var internalParams: [String: Double] {
+        _internalParams ?? params.compactMapValues { $0.asDouble }
+    }
 
     /// User-defined string metadata attributes attached to the trial.
     public let userAttrs: [String: String]
@@ -52,7 +60,7 @@ public struct PersistedTrial: Sendable {
     /// Mathematical constraint evaluation values ($v \le 0.0$ indicates satisfaction).
     public let constraints: [String: Double]
 
-    /// Intermediate step-by-step values reported via ``Trial/report(_:step:pruneIfWorse:)``.
+    /// Intermediate step-by-step values reported via ``Trial/report(_:step:pruneIfWorse:)-(Double,_,_)``.
     public let intermediateValues: [Int: Double]
 
     /// Timestamp when trial execution began.
@@ -73,7 +81,34 @@ public struct PersistedTrial: Sendable {
         return .seconds(diff)
     }
 
-    /// Creates a persisted trial record.
+    /// Creates a persisted trial record with strongly-typed parameter values.
+    public init(
+        number: Int,
+        state: TrialState,
+        value: Double?,
+        values: [Double] = [],
+        params: [String: ParameterValue],
+        internalParams: [String: Double] = [:],
+        userAttrs: [String: String] = [:],
+        constraints: [String: Double] = [:],
+        intermediateValues: [Int: Double] = [:],
+        datetimeStart: Date? = nil,
+        datetimeComplete: Date? = nil
+    ) {
+        self.number = number
+        self.state = state
+        self.value = value
+        self.values = values.isEmpty ? (value.map { [$0] } ?? []) : values
+        self.params = params
+        self._internalParams = internalParams.isEmpty ? nil : internalParams
+        self.userAttrs = userAttrs
+        self.constraints = constraints
+        self.intermediateValues = intermediateValues
+        self.datetimeStart = datetimeStart
+        self.datetimeComplete = datetimeComplete
+    }
+
+    /// Backwards-compatible convenience initializer taking numerical parameters.
     public init(
         number: Int,
         state: TrialState,
@@ -86,27 +121,114 @@ public struct PersistedTrial: Sendable {
         datetimeStart: Date? = nil,
         datetimeComplete: Date? = nil
     ) {
-        self.number = number
-        self.state = state
-        self.value = value
-        self.values = values.isEmpty ? (value.map { [$0] } ?? []) : values
-        self.params = params
-        self.userAttrs = userAttrs
-        self.constraints = constraints
-        self.intermediateValues = intermediateValues
-        self.datetimeStart = datetimeStart
-        self.datetimeComplete = datetimeComplete
+        self.init(
+            number: number,
+            state: state,
+            value: value,
+            values: values,
+            params: params.mapValues { .double($0) },
+            internalParams: params,
+            userAttrs: userAttrs,
+            constraints: constraints,
+            intermediateValues: intermediateValues,
+            datetimeStart: datetimeStart,
+            datetimeComplete: datetimeComplete
+        )
     }
 
+    // MARK: - Subscripts
+
     /// Accesses a strongly-typed user attribute value using an ``AttributeKey``.
-    public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {
+    public subscript<V>(key: AttributeKey<V>) -> V? {
+        guard let str = userAttrs[key.name] else { return nil }
+        return V.fromAttributeString(str)
+    }
+
+    /// Accesses a strongly-typed user attribute value using an ``AttributeKeyProtocol``.
+    public subscript<K: AttributeKeyProtocol>(_ key: K.Type) -> K.Value? {
         guard let str = userAttrs[K.name] else { return nil }
         return K.Value.fromAttributeString(str)
     }
 
     /// Accesses a constraint evaluation value using a ``ConstraintKey``.
-    public subscript<K: ConstraintKey>(_ key: K.Type) -> Double? {
+    public subscript(constraint key: ConstraintKey) -> Double? {
+        constraints[key.name]
+    }
+
+    /// Accesses a constraint evaluation value using a ``ConstraintKeyProtocol``.
+    public subscript<K: ConstraintKeyProtocol>(constraint key: K.Type) -> Double? {
         constraints[K.name]
+    }
+
+    /// Accesses a constraint evaluation value using a ``ConstraintKeyProtocol`` directly.
+    public subscript<K: ConstraintKeyProtocol>(_ key: K.Type) -> Double? {
+        constraints[K.name]
+    }
+
+    /// Returns the numerical floating-point value (`Double`) for the given parameter, if present.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let lr: Double = bestTrial.double("lr") ?? 0.001
+    /// ```
+    public func double(_ name: String) -> Double? {
+        params[name]?.asDouble ?? internalParams[name]
+    }
+
+    /// Returns the 32-bit floating-point value (`Float`) for the given parameter, if present.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let lr: Float = bestTrial.float("lr") ?? 0.001
+    /// ```
+    public func float(_ name: String) -> Float? {
+        double(name).map(Float.init)
+    }
+
+    /// Returns the integer value (`Int`) for the given parameter, if present.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let batchSize: Int = bestTrial.int("batch_size") ?? 32
+    /// ```
+    public func int(_ name: String) -> Int? {
+        params[name]?.asInt
+    }
+
+    /// Returns the string value for the given parameter, if present.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let tag: String = bestTrial.string("tag") ?? "default"
+    /// ```
+    public func string(_ name: String) -> String? {
+        params[name]?.asString
+    }
+
+    /// Returns the boolean value for the given parameter, if present.
+    public func bool(_ name: String) -> Bool? {
+        params[name]?.asBool
+    }
+
+    /// Deserializes a categorical parameter directly to a Swift Enum conforming to `RawRepresentable`.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let act = bestTrial.param("activation", as: Activation.self)
+    /// ```
+    public func param<T: RawRepresentable>(_ name: String, as: T.Type) -> T? where T.RawValue == String {
+        guard let s = params[name]?.asString else { return nil }
+        return T(rawValue: s)
+    }
+
+    /// Deserializes a categorical parameter to a Swift Enum conforming to `RawRepresentable` with type inference.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let act: Activation? = bestTrial.param("activation")
+    /// ```
+    public func param<T: RawRepresentable>(_ name: String) -> T? where T.RawValue == String {
+        param(name, as: T.self)
     }
 
     /// Accesses a raw string user attribute by string name.
@@ -115,18 +237,13 @@ public struct PersistedTrial: Sendable {
     }
 
     /// Deserializes a user attribute to a specific ``AttributeConvertible`` type by string name.
-    ///
-    /// - Parameters:
-    ///   - type: The target type to convert to.
-    ///   - key: The attribute key string.
-    /// - Returns: Deserialized value, or `nil` if missing or decoding failed.
     public func userAttr<T: AttributeConvertible>(as type: T.Type, key: String) -> T? {
         guard let str = userAttrs[key] else { return nil }
         return T.fromAttributeString(str)
     }
 }
 
-// MARK: - Sequence Analytics Extensions (Optuna Calibration Parity)
+// MARK: - Sequence Operations
 
 extension Sequence where Element == PersistedTrial {
     /// Filters trials to only those with ``TrialState/complete`` state and valid objective value(s).
@@ -139,6 +256,11 @@ extension Sequence where Element == PersistedTrial {
         filter { $0.state == .pruned }
     }
 
+    /// Filters trials to only those with ``TrialState/fail`` state.
+    public func failed() -> [PersistedTrial] {
+        filter { $0.state == .fail }
+    }
+
     /// Filters trials to only those where all constraint values are feasible ($v \le 0.0$).
     public func feasible() -> [PersistedTrial] {
         filter(\.isFeasible)
@@ -149,6 +271,24 @@ extension Sequence where Element == PersistedTrial {
         filter { !$0.isFeasible }
     }
 
+    /// Returns the optimal completed trial according to `direction`, or `nil` if none exist.
+    ///
+    /// - Parameter direction: The optimization direction (defaults to ``Direction/minimize``).
+    /// - Returns: The best completed trial in this sequence.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let bestAdam = study.trials.completed()
+    ///     .filter(param: "optimizer", equals: OptimizerChoice.adam)
+    ///     .best()
+    /// ```
+    public func best(direction: Direction = .minimize) -> PersistedTrial? {
+        completed().min { a, b in
+            guard let valA = a.value, let valB = b.value else { return false }
+            return direction == .minimize ? (valA < valB) : (valA > valB)
+        }
+    }
+
     /// Returns the optimal completed and feasible trial according to `direction`, or `nil` if none exist.
     ///
     /// - Parameter direction: The optimization direction (defaults to ``Direction/minimize``).
@@ -157,6 +297,29 @@ extension Sequence where Element == PersistedTrial {
         feasible().completed().min { a, b in
             guard let valA = a.value, let valB = b.value else { return false }
             return direction == .minimize ? (valA < valB) : (valA > valB)
+        }
+    }
+
+    /// Filters trials that have a specific strongly-typed user attribute value.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let resnetTrials = study.trials.filter(where: .architecture, equals: "ResNet-50")
+    /// ```
+    public func filter<V: Equatable>(where key: AttributeKey<V>, equals value: V) -> [PersistedTrial] {
+        filter { $0[key] == value }
+    }
+
+    /// Filters trials that evaluated a categorical hyperparameter equal to the specified Swift enum.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let adamTrials = study.trials.filter(param: "optimizer", equals: OptimizerChoice.adamw)
+    /// ```
+    public func filter<T: RawRepresentable & Equatable>(param name: String, equals value: T) -> [PersistedTrial]
+    where T.RawValue == String {
+        filter { trial in
+            trial.param(name, as: T.self) == value
         }
     }
 
@@ -191,7 +354,7 @@ extension Sequence where Element == PersistedTrial {
     /// - Parameter paramName: Name of the hyperparameter.
     /// - Returns: Array of sampled numerical values.
     public func values(for paramName: String) -> [Double] {
-        compactMap { $0.params[paramName] }
+        compactMap { $0.params[paramName]?.asDouble ?? $0.internalParams[paramName] }
     }
 
     /// Computes the empirical minimum and maximum bounds observed for each parameter across this sequence of trials.
@@ -202,7 +365,7 @@ extension Sequence where Element == PersistedTrial {
         var maxValues: [String: Double] = [:]
 
         for trial in self {
-            for (paramName, paramVal) in trial.params {
+            for (paramName, paramVal) in trial.internalParams {
                 minValues[paramName] = Swift.min(minValues[paramName] ?? paramVal, paramVal)
                 maxValues[paramName] = Swift.max(maxValues[paramName] ?? paramVal, paramVal)
             }

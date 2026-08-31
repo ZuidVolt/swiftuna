@@ -83,29 +83,36 @@ extension AttributeConvertible where Self: RawRepresentable, RawValue: Attribute
 ///
 /// Unlike Python's untyped string dictionary approach (`trial.set_user_attr("key", value)`),
 /// `AttributeKey` allows Swift developers to declare typed schema keys that enforce both the attribute
-/// name and its value type at compile time.
+/// name and its value type at compile time with dot-syntax autocomplete.
 ///
-/// ### Example
+/// ### Example (Dot-Syntax Recommended)
 /// ```swift
-/// public enum ArchitectureTag: AttributeKey {
-///     public typealias Value = String
-///     public static let name = "architecture"
+/// extension AttributeKey where Value == String {
+///     static let architecture = AttributeKey<String>("architecture")
 /// }
-///
-/// public enum MaxEpochs: AttributeKey {
-///     public typealias Value = Int
-///     public static let name = "max_epochs"
+/// extension AttributeKey where Value == Int {
+///     static let maxEpochs = AttributeKey<Int>("max_epochs")
 /// }
 ///
 /// // Type-safe subscript write on an active trial:
-/// trial[ArchitectureTag.self] = "ResNet-50"
-/// trial[MaxEpochs.self] = 100
+/// trial[.architecture] = "ResNet-50"
+/// trial[.maxEpochs] = 100
 ///
 /// // Type-safe read on a completed trial:
-/// let arch: String? = bestTrial[ArchitectureTag.self]
-/// let epochs: Int? = bestTrial[MaxEpochs.self]
+/// let arch: String? = bestTrial[.architecture]
+/// let epochs: Int? = bestTrial[.maxEpochs]
 /// ```
-public protocol AttributeKey: Sendable {
+public struct AttributeKey<Value: AttributeConvertible>: Sendable, Hashable {
+    /// The unique string identifier for the user attribute.
+    public let name: String
+
+    public init(_ name: String) {
+        self.name = name
+    }
+}
+
+/// A protocol enabling custom types to act as schema keys.
+public protocol AttributeKeyProtocol: Sendable {
     /// The Swift type associated with this attribute key.
     associatedtype Value: AttributeConvertible
 

@@ -457,14 +457,26 @@ public final class Study: @unchecked Sendable {
 
     /// The suggested parameter dictionary of the best completed trial in a single-objective study.
     ///
+    /// Returns a dictionary of hyperparameter names and their evaluated values for the best trial.
+    ///
     /// - Throws: ``SwiftunaError/noTrialsFound`` if no completed trials are found in the study,
     ///           or ``SwiftunaError/unsupportedMultiObjective`` if called on a multi-objective study.
-    public var bestParams: [String: Double] {
+    public var bestParams: [String: ParameterValue] {
         get throws(SwiftunaError) {
             guard let bt = try bestTrial else {
                 throw SwiftunaError.noTrialsFound
             }
             return bt.params
+        }
+    }
+
+    /// Returns a dictionary of hyperparameter names and their internal mathematical float values.
+    public var bestInternalParams: [String: Double] {
+        get throws(SwiftunaError) {
+            guard let bt = try bestTrial else {
+                throw SwiftunaError.noTrialsFound
+            }
+            return bt.internalParams
         }
     }
 
@@ -563,6 +575,7 @@ public final class Study: @unchecked Sendable {
         let state: Int32
         let values: [Double]
         let params: [String: Double]
+        let param_values: [String: ParameterValue]?
         let user_attrs: [String: String]
         let constraints: [String: Double]
         let intermediate_values: [String: Double]
@@ -575,14 +588,20 @@ public final class Study: @unchecked Sendable {
     private func parsePersistedTrial(_ trialPtr: OpaquePointer) -> PersistedTrial {
         var cJson: UnsafeMutablePointer<CChar>?
         guard rustuna_persisted_trial_get_json(trialPtr, &cJson) == 0, let cJson else {
-            return PersistedTrial(number: 0, state: .fail, value: nil, values: [], params: [:], userAttrs: [:])
+            return PersistedTrial(
+                number: 0, state: .fail, value: nil, values: [],
+                params: [:], internalParams: [:], userAttrs: [:]
+            )
         }
         defer { rustuna_string_free(cJson) }
 
         let len = strlen(cJson)
         let data = Data(bytesNoCopy: cJson, count: len, deallocator: .none)
         guard let payload = try? Self.trialDecoder.decode(PersistedTrialJSONPayload.self, from: data) else {
-            return PersistedTrial(number: 0, state: .fail, value: nil, values: [], params: [:], userAttrs: [:])
+            return PersistedTrial(
+                number: 0, state: .fail, value: nil, values: [],
+                params: [:], internalParams: [:], userAttrs: [:]
+            )
         }
 
         let intermediateValues = Dictionary(
@@ -593,12 +612,15 @@ public final class Study: @unchecked Sendable {
         let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
         let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
 
+        let decodedParams = payload.param_values ?? payload.params.mapValues { .double($0) }
+
         return PersistedTrial(
             number: payload.number,
             state: state,
             value: payload.values.first,
             values: payload.values,
-            params: payload.params,
+            params: decodedParams,
+            internalParams: payload.params,
             userAttrs: payload.user_attrs,
             constraints: payload.constraints,
             intermediateValues: intermediateValues,
@@ -621,7 +643,14 @@ public final class Study: @unchecked Sendable {
 
     // MARK: - Study User Attributes & Analytics
 
-    public func setUserAttr<K: AttributeKey>(
+    public func setUserAttr<V>(
+        _ key: AttributeKey<V>,
+        value: V
+    ) throws(SwiftunaError) {
+        try setUserAttr(key.name, value: value.toAttributeString())
+    }
+
+    public func setUserAttr<K: AttributeKeyProtocol>(
         _ key: K.Type,
         value: K.Value
     ) throws(SwiftunaError) {
@@ -647,7 +676,12 @@ public final class Study: @unchecked Sendable {
         }
     }
 
-    public func userAttr<K: AttributeKey>(_ key: K.Type) throws(SwiftunaError) -> K.Value? {
+    public func userAttr<V>(_ key: AttributeKey<V>) throws(SwiftunaError) -> V? {
+        guard let str = try userAttr(key.name) else { return nil }
+        return V.fromAttributeString(str)
+    }
+
+    public func userAttr<K: AttributeKeyProtocol>(_ key: K.Type) throws(SwiftunaError) -> K.Value? {
         guard let str = try userAttr(K.name) else { return nil }
         return K.Value.fromAttributeString(str)
     }
@@ -669,7 +703,30 @@ public final class Study: @unchecked Sendable {
         return String(cString: outPtr)
     }
 
-    public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {
+    public subscript<V>(key: AttributeKey<V>) -> V? {
+        get {
+            try? userAttr(key)
+        }
+        set {
+            if let newValue {
+                try? setUserAttr(key, value: newValue)
+            }
+        }
+    }
+
+    public subscript<K: AttributeKeyProtocol>(_ key: K.Type) -> K.Value? {
+        get {
+            guard let str = try? userAttr(K.name) else { return nil }
+            return K.Value.fromAttributeString(str)
+        }
+        set {
+            if let newValue {
+                try? setUserAttr(K.name, value: newValue.toAttributeString())
+            }
+        }
+    }
+
+    public subscript(userAttr key: String) -> String? {
         get {
             try? userAttr(key)
         }
@@ -892,7 +949,7 @@ public final class Study: @unchecked Sendable {
         let payload = AddTrialJSONPayload(
             state: trial.state.rawValue,
             values: trial.state == .complete ? trial.values : nil,
-            params: trial.params,
+            params: trial.internalParams,
             intermediate_values: intMap,
             user_attrs: trial.userAttrs.isEmpty ? nil : trial.userAttrs,
             system_attrs: nil

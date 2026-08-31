@@ -149,9 +149,12 @@ let robustPruner = PatientPruner(wrappedPruner: basePruner, patience: 3)
 
 ---
 
-## Reporting intermediate values
+## Reporting intermediate values and pruning
 
-Inside your training loop, call ``Trial/report(_:step:pruneIfWorse:)``:
+Inside your training loop, report step metrics (such as epoch validation loss) to enable pruners to evaluate trajectories. Swiftuna supports two ergonomic styles:
+
+### Option 1: Automatic early stopping (throwing)
+Pass `pruneIfWorse: true` to ``Trial/report(_:step:pruneIfWorse:)-(Double,_,_)``. If the pruner recommends early termination, it throws ``SwiftunaError/trialPruned(reason:)``:
 
 ```swift
 try study.optimize(nTrials: 50) { trial in
@@ -162,6 +165,28 @@ try study.optimize(nTrials: 50) { trial in
         
         // Reports intermediate value; throws trialPruned if pruner triggers
         try trial.report(loss, step: epoch, pruneIfWorse: true)
+    }
+    
+    return model.finalValidationLoss()
+}
+```
+
+### Option 2: Explicit inspection and cleanup (non-throwing)
+When training involves resources that must be flushed or cleaned up before stopping (or when using nested `do-catch` blocks), inspect ``Trial/shouldPrune`` manually:
+
+```swift
+try study.optimize(nTrials: 50) { trial in
+    var model = initializeModel()
+    
+    for epoch in 1...100 {
+        let loss = model.trainEpoch()
+        try trial.report(loss, step: epoch)
+
+        if try trial.shouldPrune {
+            print("Early stopping at epoch \(epoch)")
+            // Perform custom checkpoint saving, GPU buffer deallocation, etc.
+            try trial.prune()
+        }
     }
     
     return model.finalValidationLoss()

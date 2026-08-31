@@ -107,6 +107,39 @@ public struct Trial: ~Copyable {
         return outVal
     }
 
+    /// Suggests a 32-bit floating-point parameter value (`Float`) from a continuous or discretized range.
+    ///
+    /// Ideal for direct interop with GPU tensor frameworks like Apple MLX, PyTorch, or Metal Shading Language.
+    ///
+    /// - Parameters:
+    ///   - name: A parameter name.
+    ///   - range: Closed range `[lowerBound, upperBound]` defining the endpoints of suggested values.
+    ///   - step: A discretization step. When specified, suggested values will be quantized to multiples of `step`.
+    ///   - log: If `true`, suggest values from a log scale. Incompatible with `step != nil`.
+    /// - Returns: A suggested `Float` value.
+    /// - Throws: ``SwiftunaError/handleExpired(_:)`` if the trial handle is invalid,
+    ///           or ``SwiftunaError/invalidRange(_:)`` if the range is invalid.
+    ///
+    /// ### Example
+    /// ```swift
+    /// let lr: Float = try trial.suggest("lr", in: 1e-4...1e-1, log: true)
+    /// let dropout: Float = try trial.suggest("dropout", in: 0.0...0.5, step: 0.05)
+    /// ```
+    public mutating func suggest(
+        _ name: String,
+        in range: ClosedRange<Float>,
+        step: Float? = nil,
+        log: Bool = false
+    ) throws(SwiftunaError) -> Float {
+        let dVal = try suggest(
+            name,
+            in: Double(range.lowerBound)...Double(range.upperBound),
+            step: step.map(Double.init),
+            log: log
+        )
+        return Float(dVal)
+    }
+
     /// Suggests an integer parameter value from a discrete range.
     ///
     /// - Parameters:
@@ -166,6 +199,9 @@ public struct Trial: ~Copyable {
     ///
     /// ### Example
     /// ```swift
+    /// enum Activation: String, CaseIterable, Sendable { case relu, gelu, silu }
+    /// let activation = try trial.suggest("activation", choices: Activation.allCases) // Inferred as Activation
+    /// let batchSize = try trial.suggest("batch_size", choices: [32, 64, 128])         // Inferred as Int
     /// let optimizer = try trial.suggest("optimizer", choices: ["adamw", "sgd", "adam"])
     /// ```
     public mutating func suggest<T: Equatable>(
@@ -180,20 +216,15 @@ public struct Trial: ~Copyable {
         }
 
         var chosenIdx: Int = 0
-        let cStrings: [UnsafePointer<CChar>?] = choices.map { choice in
-            String(describing: choice).withCString { cStr in
-                UnsafePointer(strdup(cStr))
+        let stringChoices: [String] = choices.map { choice in
+            if let r = choice as? (any RawRepresentable), let s = r.rawValue as? String {
+                return s
             }
+            return String(describing: choice)
         }
-        defer {
-            for ptr in cStrings {
-                if let ptr {
-                    free(UnsafeMutableRawPointer(mutating: ptr))
-                }
-            }
-        }
+
         let status = name.withCString { cName in
-            cStrings.withUnsafeBufferPointer { buf in
+            withCStrings(stringChoices) { buf in
                 rustuna_trial_suggest_categorical(
                     raw,
                     cName,
@@ -215,13 +246,6 @@ public struct Trial: ~Copyable {
 
     private var localAttrs: [String: String] = [:]
 
-    public mutating func setUserAttr<K: AttributeKey>(
-        _ key: K.Type,
-        value: K.Value
-    ) throws(SwiftunaError) {
-        try setUserAttr(K.name, value: value.toAttributeString())
-    }
-
     public mutating func setUserAttr(
         _ key: String,
         value: some AttributeConvertible
@@ -241,16 +265,43 @@ public struct Trial: ~Copyable {
         localAttrs[key] = strVal
     }
 
-    public subscript<K: AttributeKey>(_ key: K.Type) -> K.Value? {
+    public subscript<V>(key: AttributeKey<V>) -> V? {
+        mutating get {
+            guard let str = localAttrs[key.name] else { return nil }
+            return V.fromAttributeString(str)
+        }
+        set {
+            if let newValue {
+                try? setUserAttr(key.name, value: newValue)
+            } else {
+                localAttrs.removeValue(forKey: key.name)
+            }
+        }
+    }
+
+    public subscript<K: AttributeKeyProtocol>(_ key: K.Type) -> K.Value? {
         mutating get {
             guard let str = localAttrs[K.name] else { return nil }
             return K.Value.fromAttributeString(str)
         }
         set {
             if let newValue {
-                try? setUserAttr(K.self, value: newValue)
+                try? setUserAttr(K.name, value: newValue)
             } else {
                 localAttrs.removeValue(forKey: K.name)
+            }
+        }
+    }
+
+    public subscript(userAttr key: String) -> String? {
+        mutating get {
+            localAttrs[key]
+        }
+        set {
+            if let newValue {
+                try? setUserAttr(key, value: newValue)
+            } else {
+                localAttrs.removeValue(forKey: key)
             }
         }
     }
@@ -308,8 +359,39 @@ public struct Trial: ~Copyable {
         localConstraints[name] = value
     }
 
-    /// Sets a strongly-typed constraint on the trial using a `ConstraintKey`.
-    public mutating func setConstraint<K: ConstraintKey>(
+    /// Sets a mathematical constraint using a ``ConstraintKey`` and a floating-point evaluation.
+    ///
+    /// Values `<= 0.0` indicate constraint satisfaction (feasibility). Values `> 0.0` indicate violation magnitude.
+    ///
+    /// ### Example
+    /// ```swift
+    /// extension ConstraintKey { static let maxLatency = ConstraintKey("max_latency_ms") }
+    /// try trial.setConstraint(.maxLatency, value: latencyMs - 25.0)
+    /// ```
+    public mutating func setConstraint(
+        _ key: ConstraintKey,
+        value: some BinaryFloatingPoint
+    ) throws(SwiftunaError) {
+        try setConstraint(key.name, value: Double(value))
+    }
+
+    /// Sets a mathematical constraint using a ``ConstraintKey`` and an integer evaluation (such as parameter count).
+    ///
+    /// Values `<= 0` indicate constraint satisfaction (feasibility). Values `> 0` indicate violation magnitude.
+    ///
+    /// ### Example
+    /// ```swift
+    /// extension ConstraintKey { static let maxParams = ConstraintKey("max_params_10k") }
+    /// try trial.setConstraint(.maxParams, value: model.totalParameters - 10_000)
+    /// ```
+    public mutating func setConstraint(
+        _ key: ConstraintKey,
+        value: some BinaryInteger
+    ) throws(SwiftunaError) {
+        try setConstraint(key.name, value: Double(value))
+    }
+
+    public mutating func setConstraint<K: ConstraintKeyProtocol>(
         _ key: K.Type,
         value: Double
     ) throws(SwiftunaError) {
@@ -317,13 +399,6 @@ public struct Trial: ~Copyable {
     }
 
     /// Sets multiple constraints on the trial in batch.
-    ///
-    /// A trial is feasible when every constraint value is `<= 0.0`, and infeasible when any constraint is `> 0.0`.
-    /// Constraint values of `NaN` are rejected.
-    ///
-    /// - Parameters:
-    ///   - constraints: A dictionary mapping constraint names to their evaluated values.
-    /// - Throws: ``SwiftunaError/invalidArgument(_:)`` if any constraint value is NaN.
     public mutating func setConstraints(
         _ constraints: [String: Double]
     ) throws(SwiftunaError) {
@@ -337,12 +412,35 @@ public struct Trial: ~Copyable {
         localConstraints
     }
 
-    public subscript<K: ConstraintKey>(_ key: K.Type) -> Double? {
-        localConstraints[K.name]
+    public subscript(constraint key: ConstraintKey) -> Double? {
+        mutating get {
+            localConstraints[key.name]
+        }
+        set {
+            if let newValue {
+                try? setConstraint(key.name, value: newValue)
+            } else {
+                localConstraints.removeValue(forKey: key.name)
+            }
+        }
     }
 
-    public subscript(constraint name: String) -> Double? {
-        localConstraints[name]
+    public subscript<K: ConstraintKeyProtocol>(constraint key: K.Type) -> Double? {
+        mutating get {
+            self[constraint: ConstraintKey(K.name)]
+        }
+        set {
+            self[constraint: ConstraintKey(K.name)] = newValue
+        }
+    }
+
+    public subscript<K: ConstraintKeyProtocol>(_ key: K.Type) -> Double? {
+        mutating get {
+            self[constraint: ConstraintKey(K.name)]
+        }
+        set {
+            self[constraint: ConstraintKey(K.name)] = newValue
+        }
     }
 
     // MARK: - Intermediate Reporting & Pruning
@@ -358,14 +456,6 @@ public struct Trial: ~Copyable {
     ///   - pruneIfWorse: If `true`, immediately evaluates the study pruner and throws ``SwiftunaError/trialPruned(reason:)``
     ///                   if early stopping is recommended.
     /// - Throws: ``SwiftunaError/trialPruned(reason:)`` when `pruneIfWorse` is `true` and pruning is triggered.
-    ///
-    /// ### Example
-    /// ```swift
-    /// for epoch in 1...50 {
-    ///     let loss = evaluateEpoch(epoch)
-    ///     try trial.report(loss, step: epoch, pruneIfWorse: true)
-    /// }
-    /// ```
     public mutating func report(
         _ value: Double,
         step: Int,
@@ -380,7 +470,27 @@ public struct Trial: ~Copyable {
         }
     }
 
-    /// Evaluates whether the study pruner recommends pruning based on the latest reported value.
+    /// Reports an intermediate 32-bit floating point objective value (`Float`) for the given step.
+    public mutating func report(
+        _ value: Float,
+        step: Int,
+        pruneIfWorse: Bool = false
+    ) throws(SwiftunaError) {
+        try report(Double(value), step: step, pruneIfWorse: pruneIfWorse)
+    }
+
+    /// Evaluates whether the study pruner recommends early stopping based on the latest reported value.
+    ///
+    /// Useful for evaluating pruning explicitly without throwing immediately, enabling custom cleanup, checkpointing, or logging.
+    ///
+    /// ### Example
+    /// ```swift
+    /// try trial.report(valLoss, step: epoch)
+    /// if try trial.shouldPrune {
+    ///     saveCheckpoint()
+    ///     try trial.prune()
+    /// }
+    /// ```
     public var shouldPrune: Bool {
         get throws(SwiftunaError) {
             guard let study = studyRef else { return false }
@@ -393,4 +503,37 @@ public struct Trial: ~Copyable {
             )
         }
     }
+
+    /// Manually prunes the trial, throwing ``SwiftunaError/trialPruned(reason:)``.
+    ///
+    /// ### Example
+    /// ```swift
+    /// if try trial.shouldPrune {
+    ///     try trial.prune(reason: "Validation loss diverged at epoch \(epoch)")
+    /// }
+    /// ```
+    public func prune(reason: String? = nil) throws(SwiftunaError) -> Never {
+        let step = intermediateSteps.last?.step ?? 0
+        let val = intermediateSteps.last?.value ?? 0.0
+        throw SwiftunaError.trialPruned(reason: reason ?? "Pruned at step \(step) with value \(val)")
+    }
+}
+
+fileprivate func withCStrings<R>(
+    _ strings: [String],
+    _ body: (UnsafeBufferPointer<UnsafePointer<CChar>?>) throws -> R
+) rethrows -> R {
+    func recurse(index: Int, ptrs: inout [UnsafePointer<CChar>?]) throws -> R {
+        if index == strings.count {
+            return try ptrs.withUnsafeBufferPointer(body)
+        }
+        return try strings[index].withCString { cStr in
+            ptrs.append(cStr)
+            defer { ptrs.removeLast() }
+            return try recurse(index: index + 1, ptrs: &ptrs)
+        }
+    }
+    var ptrs: [UnsafePointer<CChar>?] = []
+    ptrs.reserveCapacity(strings.count)
+    return try recurse(index: 0, ptrs: &ptrs)
 }

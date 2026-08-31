@@ -65,14 +65,19 @@ Use `suggest(_:in:step:log:)` with a `ClosedRange<Int>`:
 - Great for batch sizes, layer counts, embedding dimensions, or training epoch limits.
 
 ### Categorical parameters
-Use `suggest(_:choices:)` with a list of strings or enum cases:
-- Useful for optimizer selection (`["adamw", "sgd", "rmsprop"]`), activation functions (`["relu", "gelu", "swish"]`), or normalization methods.
+Use `suggest(_:choices:)` with a list of strings, integers, or native Swift enums:
+- Generic inference automatically returns the element type (e.g. `Activation`, `Int`, or `String`) without manual casting.
+- Preserves typed enum representations on completed trials without index degradation.
 
 ```swift
+enum Optimizer: String, CaseIterable, Sendable {
+    case adamw, sgd, rmsprop
+}
+
 try study.optimize(nTrials: 100) { trial in
     let lr = try trial.suggest("lr", in: 1e-5...1e-1, log: true)
-    let batchSize = try trial.suggest("batch_size", in: 16...128, step: 16)
-    let optimizer = try trial.suggest("optimizer", choices: ["adamw", "sgd", "rmsprop"])
+    let batchSize = try trial.suggest("batch_size", choices: [32, 64, 128]) // Inferred as Int
+    let optimizer = try trial.suggest("optimizer", choices: Optimizer.allCases) // Inferred as Optimizer
 
     let validationLoss = trainAndEvaluate(lr: lr, batchSize: batchSize, opt: optimizer)
     return validationLoss
@@ -108,7 +113,14 @@ Once the optimization loop completes, read the best trial, parameter values, and
 if let best = try study.bestTrial {
     print("Optimization completed across \(try study.trials.count) trials")
     print("Best trial #\(best.number): objective value = \(best.value ?? 0.0)")
-    print("Optimal parameters:")
+    
+    // Direct typed accessors:
+    let lr: Double = best.double("lr") ?? 0.0
+    let batchSize: Int = best.int("batch_size") ?? 32
+    let optEnum = best.param("optimizer", as: Optimizer.self)
+    print("Optimal learning rate: \(lr), batch size: \(batchSize), optimizer: \(optEnum ?? .adamw)")
+
+    print("All evaluated parameters:")
     for (param, val) in best.params {
         print("  - \(param): \(val)")
     }

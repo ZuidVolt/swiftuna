@@ -16,14 +16,11 @@ import Foundation
 /// - In ``NSGAIISampler``, constrained-domination ensures feasible solutions strictly dominate infeasible ones,
 ///   and infeasible solutions are ranked by total constraint violation magnitude.
 ///
-/// ### Example
+/// ### Example (Dot-Syntax Recommended)
 /// ```swift
-/// public enum MemoryLimit: ConstraintKey {
-///     public static let name = "memory_mb_limit"
-/// }
-///
-/// public enum MaxLatency: ConstraintKey {
-///     public static let name = "max_latency_ms"
+/// extension ConstraintKey {
+///     static let maxLatency = ConstraintKey("max_latency_ms")
+///     static let maxMemory = ConstraintKey("memory_mb_limit")
 /// }
 ///
 /// try study.optimize(nTrials: 100) { trial in
@@ -31,13 +28,26 @@ import Foundation
 ///     let (loss, memMB, latencyMs) = evaluateModel(batchSize: batchSize)
 ///
 ///     // Enforce memMB <= 4096 and latencyMs <= 50.0:
-///     trial[constraint: MemoryLimit.self] = memMB - 4096.0
-///     trial[constraint: MaxLatency.self] = latencyMs - 50.0
+///     trial[constraint: .maxMemory] = memMB - 4096.0
+///     trial[constraint: .maxLatency] = latencyMs - 50.0
 ///
 ///     return loss
 /// }
 /// ```
-public protocol ConstraintKey: Sendable {
-    /// The unique string name identifier used to record this constraint in trial records.
+public struct ConstraintKey: Sendable, Hashable, ExpressibleByStringLiteral {
+    /// The unique string identifier for the constraint.
+    public let name: String
+
+    public init(_ name: String) {
+        self.name = name
+    }
+
+    public init(stringLiteral value: String) {
+        self.name = value
+    }
+}
+
+/// A protocol enabling custom types to serve as constraint keys.
+public protocol ConstraintKeyProtocol: Sendable {
     static var name: String { get }
 }

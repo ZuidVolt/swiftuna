@@ -97,6 +97,7 @@ if let best = try study.bestTrial {
 - ``StudySummary``
 
 ### Type-safe metadata and constraints
+- ``ParameterValue``
 - ``AttributeKey``
 - ``AttributeConvertible``
 - ``ConstraintKey``

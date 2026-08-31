@@ -3,12 +3,17 @@ import Testing
 
 @testable import Swiftuna
 
-private enum MaxLatency: ConstraintKey {
+private enum MaxLatency: ConstraintKeyProtocol {
     static let name = "max_latency"
 }
 
-private enum MemoryBudget: ConstraintKey {
+private enum MemoryBudget: ConstraintKeyProtocol {
     static let name = "memory_budget"
+}
+
+extension ConstraintKey {
+    static let maxLatency = ConstraintKey("max_latency")
+    static let memoryBudget = ConstraintKey("memory_budget")
 }
 
 @Suite("Constrained Optimization & Feasibility Invariant Tests")

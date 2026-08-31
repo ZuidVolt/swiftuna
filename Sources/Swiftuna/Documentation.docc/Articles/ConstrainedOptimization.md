@@ -28,17 +28,14 @@ Swiftuna avoids penalty weights entirely:
 
 ## Declaring typed constraint keys
 
-Define static ``ConstraintKey`` types to avoid string typos and enforce clear schema definitions:
+Define static ``ConstraintKey`` properties to enable dot-syntax and avoid string typos:
 
 ```swift
 import Swiftuna
 
-public enum MemoryBound: ConstraintKey {
-    public static let name = "memory_mb_bound"
-}
-
-public enum LatencyBound: ConstraintKey {
-    public static let name = "latency_ms_bound"
+extension ConstraintKey {
+    static let memoryBound = ConstraintKey("memory_mb_bound")
+    static let latencyBound = ConstraintKey("latency_ms_bound")
 }
 ```
 
@@ -59,8 +56,11 @@ try study.optimize(nTrials: 100) { trial in
     let (valLoss, memMB, latencyMs) = evaluateModel(batchSize: batchSize, lr: lr)
 
     // Satisfied when memMB <= 4096 MB and latencyMs <= 25.0 ms
-    trial[constraint: MemoryBound.self] = memMB - 4096.0
-    trial[constraint: LatencyBound.self] = latencyMs - 25.0
+    trial[constraint: .memoryBound] = memMB - 4096.0
+    trial[constraint: .latencyBound] = latencyMs - 25.0
+
+    // You can also use string literals directly:
+    // trial[constraint: "power_watts_bound"] = powerWatts - 150.0
 
     return valLoss
 }
@@ -80,6 +80,7 @@ if let bestFeasible = allTrials.bestFeasible(direction: .minimize) {
     print("Optimal feasible trial #\(bestFeasible.number) with loss \(bestFeasible.value ?? 0.0)")
     print("Parameters: \(bestFeasible.params)")
     print("Constraints: \(bestFeasible.constraints)")
+    print("Memory slack: \(bestFeasible[constraint: .memoryBound] ?? 0.0)")
 }
 ```
 
@@ -120,8 +121,6 @@ let paretoFront = try study.bestTrials
 print("Discovered \(paretoFront.count) Pareto-optimal trade-offs:")
 
 for trial in paretoFront {
-    let accuracy = trial.values[0]
-    let latency = trial.values[1]
-    print("Trial #\(trial.number): Accuracy = \(String(format: "%.2f%%", accuracy * 100)), Latency = \(String(format: "%.1f ms", latency))")
+    print("Trial #\(trial.number): Accuracy = \(trial.values[0]), Latency = \(trial.values[1]) ms")
 }
 ```

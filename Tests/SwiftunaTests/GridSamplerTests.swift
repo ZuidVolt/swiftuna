@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import Swiftuna
+import Testing
 
 @Suite("GridSampler & Cartesian Exhaustion Tests", .serialized)
 struct GridSamplerTests {
@@ -10,7 +10,7 @@ struct GridSamplerTests {
         // 2 x 3 = 6 combinations
         let sampler = GridSampler(searchSpace: [
             "x": [1.0, 2.0],
-            "y": [10.0, 20.0, 30.0]
+            "y": [10.0, 20.0, 30.0],
         ])
 
         let study = try Swiftuna.createStudy(
@@ -32,8 +32,8 @@ struct GridSamplerTests {
         // Check that all 6 combinations are unique
         var observedPairs: Set<String> = []
         for t in completed {
-            let xVal = t.params["x"]!
-            let yVal = t.params["y"]!
+            let xVal = t.double("x")!
+            let yVal = t.double("y")!
             observedPairs.insert("\(xVal),\(yVal)")
         }
         #expect(observedPairs.count == 6)
@@ -50,7 +50,7 @@ struct GridSamplerTests {
         // 2 x 2 = 4 combinations
         let sampler = GridSampler(searchSpace: [
             "a": [0.0, 1.0],
-            "b": [10.0, 20.0]
+            "b": [10.0, 20.0],
         ])
 
         let study = try Swiftuna.createStudy(
@@ -84,7 +84,7 @@ struct GridSamplerTests {
     func testGridSamplerSeedDeterminism() throws {
         let space: [String: GridSampler.ValueList] = [
             "dim1": [1.0, 2.0, 3.0],
-            "dim2": [10.0, 20.0, 30.0]
+            "dim2": [10.0, 20.0, 30.0],
         ]
 
         let study1 = try Swiftuna.createStudy(
@@ -125,7 +125,7 @@ struct GridSamplerTests {
         let sampler = GridSampler(searchSpace: [
             "float_param": [0.1, 0.5],
             "int_param": .init([1, 2]),
-            "cat_param": .init(categorical: ["optA", "optB"])
+            "cat_param": .init(categorical: ["optA", "optB"]),
         ])
 
         let study = try Swiftuna.createStudy(
@@ -141,6 +141,6 @@ struct GridSamplerTests {
         }
 
         let trials = try study.trials
-        #expect(trials.count == 8) // 2 * 2 * 2 = 8
+        #expect(trials.count == 8)  // 2 * 2 * 2 = 8
     }
 }

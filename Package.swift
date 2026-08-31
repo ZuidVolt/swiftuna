@@ -4,13 +4,14 @@ import PackageDescription
 
 // Vendored Rust staticlibs — checked in via Tools/package-binaries.py
 // Always release binary (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
-let vendoredMacDir = "Sources/LibRustuna/artifacts/macos-arm64"
+let packageDir = Context.packageDirectory
+let vendoredMacDir = "\(packageDir)/Sources/LibRustuna/artifacts/macos-arm64"
 #if arch(x86_64)
-    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-x86_64"
+    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
 #elseif arch(arm64)
-    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-aarch64"
+    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-aarch64"
 #else
-    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-x86_64"
+    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
 #endif
 
 let linkerSettings: [LinkerSetting] = [

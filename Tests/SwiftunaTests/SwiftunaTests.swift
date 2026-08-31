@@ -72,14 +72,21 @@ struct TypedErrorAndSamplerTests {
 }
 
 // Test Attribute Keys
-enum ModelAccuracy: AttributeKey {
+enum ModelAccuracy: AttributeKeyProtocol {
     typealias Value = Double
     static let name = "model_accuracy"
 }
 
-enum WeightFingerprint: AttributeKey {
+enum WeightFingerprint: AttributeKeyProtocol {
     typealias Value = String
     static let name = "weight_fingerprint"
+}
+
+extension AttributeKey where Value == Double {
+    static let accuracy = AttributeKey<Double>("model_accuracy")
+}
+extension AttributeKey where Value == String {
+    static let fingerprint = AttributeKey<String>("weight_fingerprint")
 }
 
 @Suite("Optuna Calibration & Type-Safe Attributes Tests")
@@ -179,11 +186,12 @@ struct EnqueueAndImportanceTests {
         let study = try Swiftuna.createStudy(name: "enqueue_test", sampler: TPESampler(seed: 42))
 
         // Pre-register baseline configuration using fluent chaining
-        try study.enqueue([
-            "weight": 1.5,
-            "min_comp": 8,
-            "mode": "fast"
-        ], userAttrs: ["tag": "baseline"])
+        try study.enqueue(
+            [
+                "weight": 1.5,
+                "min_comp": 8,
+                "mode": "fast",
+            ], userAttrs: ["tag": "baseline"])
 
         // Ask for trial 0
         var trial0 = try study.ask()
@@ -246,7 +254,9 @@ struct EnqueueAndImportanceTests {
         case .success:
             Issue.record("Expected failure when evaluating importances on empty study")
         case .failure(let err):
-            #expect(err == .noCompletedTrial || err == .invalidArgument("Failed to evaluate parameter importances") || "\(err)".contains("No completed trial"))
+            #expect(
+                err == .noCompletedTrial || err == .invalidArgument("Failed to evaluate parameter importances")
+                    || "\(err)".contains("No completed trial"))
         }
     }
 
@@ -327,5 +337,117 @@ struct EnqueueAndImportanceTests {
         #expect(subset.count == 1)
         #expect(subset["param_a"] != nil)
         #expect(subset["param_b"] == nil)
+    }
+
+    private enum ActivationTestEnum: String, CaseIterable, Sendable {
+        case relu, gelu, silu
+    }
+
+    @Test("Float ML interop, flexible constraint types, and type-inferred enum extraction")
+    func testFloatAndErgonomicUtilities() throws {
+        let study = try Swiftuna.createStudy(name: "float_utility_test")
+
+        try study.optimize(nTrials: 5) { trial in
+            // 1. Suggest as Float (Float32)
+            let lr: Float = try trial.suggest("lr", in: 1e-4...1e-1, log: true)
+            #expect(lr >= 1e-4 && lr <= 1e-1)
+
+            let hiddenDim = try trial.suggest("hidden_dim", choices: [32, 64])
+            _ = try trial.suggest("activation", choices: ActivationTestEnum.allCases)
+
+            // 2. Set constraints using Int and Float variables directly
+            let totalParams: Int = hiddenDim * 100
+            try trial.setConstraint("param_bound", value: totalParams - 5000)
+
+            let latency: Float = 12.5
+            try trial.setConstraint("latency_bound", value: latency - 20.0)
+
+            // 3. Report Float intermediate value
+            let intermediateLoss: Float = 0.42
+            try trial.report(intermediateLoss, step: 1)
+
+            return Double(lr) + Double(hiddenDim)
+        }
+
+        let best = try #require(try study.bestTrial)
+
+        // 4. Read back Float scalar
+        let bestLR: Float? = best.float("lr")
+        #expect(bestLR != nil)
+        #expect(bestLR! >= 1e-4 && bestLR! <= 1e-1)
+
+        // 5. Type-inferred enum parameter extraction
+        let actEnum: ActivationTestEnum? = best.param("activation")
+        #expect(actEnum != nil)
+        #expect(ActivationTestEnum.allCases.contains(actEnum!))
+
+        // 6. Verify constraints were recorded properly
+        #expect(best.constraints["param_bound"] != nil)
+        #expect(best.constraints["latency_bound"] != nil)
+        #expect(best.constraints["latency_bound"]! < 0.0)
+    }
+
+    @Test("Declarative sequence dot-chaining: best(), failed(), and type-safe filtering")
+    func testDeclarativeSequenceOperations() throws {
+        let archKey = AttributeKey<String>("arch")
+        enum OptEnum: String, CaseIterable, Sendable {
+            case adam, sgd, adamw
+        }
+
+        let t1 = PersistedTrial(
+            number: 0,
+            state: .complete,
+            value: 0.5,
+            params: ["optimizer": .string("adam")],
+            userAttrs: ["arch": "Transformer"]
+        )
+        let t2 = PersistedTrial(
+            number: 1,
+            state: .complete,
+            value: 0.2,
+            params: ["optimizer": .string("sgd")],
+            userAttrs: ["arch": "Transformer"]
+        )
+        let t3 = PersistedTrial(
+            number: 2,
+            state: .complete,
+            value: 0.8,
+            params: ["optimizer": .string("adam")],
+            userAttrs: ["arch": "CNN"]
+        )
+        let t4 = PersistedTrial(
+            number: 3,
+            state: .pruned,
+            value: 2.0,
+            params: [:]
+        )
+        let t5 = PersistedTrial(
+            number: 4,
+            state: .fail,
+            value: nil,
+            params: [:]
+        )
+
+        let trials = [t1, t2, t3, t4, t5]
+
+        // State filters
+        #expect(trials.completed().count == 3)
+        #expect(trials.pruned().count == 1)
+        #expect(trials.failed().count == 1)
+        #expect(trials.failed().first?.number == 4)
+
+        // Best on filtered sequence
+        let bestTransformer = trials.completed().filter(where: archKey, equals: "Transformer").best()
+        #expect(bestTransformer?.number == 1)
+        #expect(bestTransformer?.value == 0.2)
+
+        let bestAdam = trials.completed().filter(param: "optimizer", equals: OptEnum.adam).best()
+        #expect(bestAdam?.number == 0)
+        #expect(bestAdam?.value == 0.5)
+
+        // Best maximize
+        let maxTrial = trials.completed().best(direction: .maximize)
+        #expect(maxTrial?.number == 2)
+        #expect(maxTrial?.value == 0.8)
     }
 }
