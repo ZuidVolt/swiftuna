@@ -1,4 +1,3 @@
-# .github/workflows/deploy-pages.yml
 name: deploy-pages
 
 on:
@@ -47,7 +46,6 @@ jobs:
 
       - name: Generate DocC documentation
         run: |
-          # Resolve the template directory containing index.html
           if [ -d "/tmp/docc-render/dist" ]; then
             TEMPLATE_DIR="/tmp/docc-render/dist"
           else
@@ -92,10 +90,10 @@ jobs:
 
       - name: Verify asset output
         run: |
-          echo "=== Root contents ==="
-          ls -la ./docs/
-          echo "=== JavaScript bundles ==="
-          ls -la ./docs/js/./docs/js/*.js
+          echo "=== Root directory ==="
+          ls -lh ./docs/
+          echo "=== JavaScript directory ==="
+          ls -lh ./docs/js/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
