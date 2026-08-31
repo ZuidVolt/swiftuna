@@ -135,6 +135,7 @@ pub extern "C" fn rustuna_sampler_random_new(seed: u64, has_seed: bool) -> *mut 
         } else {
             RandomSampler::new()
         };
+
         Box::into_raw(Box::new(RustunaSampler {
             inner: Arc::new(sampler),
         }))
