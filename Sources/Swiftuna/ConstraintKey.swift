@@ -16,6 +16,7 @@ import Foundation
 /// - In ``NSGAIISampler``, constrained-domination ensures feasible solutions strictly dominate infeasible ones,
 ///   and infeasible solutions are ranked by total constraint violation magnitude.
 ///
+///
 /// ### Example
 /// ```swift
 /// public enum MemoryLimit: ConstraintKey {
