@@ -1910,6 +1910,7 @@ pub extern "C" fn rustuna_study_get_trials_filtered(
         );
         return -1;
     }
+
     let res = catch_unwind(AssertUnwindSafe(|| {
         let s = unsafe { &mut *study };
         let mut guard = match s.inner.storage.write() {
