@@ -1,9 +1,7 @@
 # Swiftuna
 
-[![Swift 6.0](https://img.shields.io/badge/Swift-6.0-orange.svg?style=flat)](https://swift.org)
+[![Swift 6.3](https://img.shields.io/badge/Swift-6.0-orange.svg?style=flat)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-blue.svg?style=flat)](#installation)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DocC](https://img.shields.io/badge/Documentation-DocC-brightgreen.svg)](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/)
 [![Optuna Compatible](https://img.shields.io/badge/Optuna%20Dashboard-Compatible-blueviolet.svg)](#optuna-dashboard-integration)
 
 Swiftuna provides Swift 6 bindings for [Rustuna](https://github.com/optuna/rustuna) (`rustuna_core`), the Rust rewrite of the engine behind Optuna.
@@ -266,7 +264,7 @@ just docs-preview 8080
 
 ## License
 
-Swiftuna is open source under the [MIT License](LICENSE).
+Swiftuna is open source under the [GNU LESSER GENERAL PUBLIC LICENSE](LICENSE).
 
 ### Credits
 Swiftuna builds on [Rustuna](https://github.com/optuna/rustuna) and the algorithmic work of [Optuna](https://github.com/optuna/optuna).
