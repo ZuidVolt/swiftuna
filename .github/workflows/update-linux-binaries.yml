@@ -7,6 +7,7 @@ on:
       - "crates/rustuna-ffi/**"
       - "Sources/LibRustuna/include/**"
       - ".github/workflows/update-linux-binaries.yml"
+      - "Package.swift"
   workflow_dispatch:
 
 permissions:
