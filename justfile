@@ -57,5 +57,5 @@ docs-build:
 
 # Start a local web server to preview DocC documentation with live reload
 docs-preview port="8080":
-    -kill -9 $$(lsof -ti :{{ port }}) 2>/dev/null || true
-    swift package --disable-sandbox preview-documentation --target Swiftuna --port {{ port }}
+ -kill -9 $(lsof -ti :{{ port }}) 2>/dev/null || true
+ swift package --disable-sandbox preview-documentation --target Swiftuna --port {{ port }}

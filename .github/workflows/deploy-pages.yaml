@@ -1,0 +1,100 @@
+name: Deploy DocC Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Sources/Swiftuna/**'
+      - 'Package.*'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: "pages-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache SPM build artifacts across workflow runs
+      - name: Cache Swift PM Build Artifacts
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      # Cache Cargo registry and FFI targets if re-compilation is needed
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/rustuna-ffi/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('crates/rustuna-ffi/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Ensure Rust FFI Static Library Exists
+        run: |
+          ARTIFACT="Sources/LibRustuna/artifacts/macos-arm64/librustuna_ffi.a"
+          if [ ! -f "$ARTIFACT" ]; then
+            echo "Building Rust FFI binary..."
+            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
+            mkdir -p Sources/LibRustuna/artifacts/macos-arm64
+            strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
+            cp crates/rustuna-ffi/target/release/librustuna_ffi.a "$ARTIFACT"
+          else
+            echo "Rust FFI binary already present."
+          fi
+
+      - name: Build Static DocC Documentation
+        run: |
+          # Matches your justfile target configuration
+          swift package --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target Swiftuna \
+            --disable-indexing \
+            --transform-for-static-hosting \
+            --hosting-base-path ${{ github.event.repository.name }} \
+            --output-path ./docs
+
+      - name: Prepare DocC and Context7 Assets
+        run: |
+          # Bypass GitHub Pages Jekyll processing (required for DocC assets)
+          touch ./docs/.nojekyll
+
+          # Expose an llms.txt entrypoint for AI scrapers (Context7)
+          cat << 'EOF' > ./docs/llms.txt
+          # Swiftuna Documentation
+          > Swiftuna is an optimization and hyperparameter tuning engine written in Swift with Rust FFI backend support.
+
+          ## Key Concepts & Modules
+          - Target: Swiftuna
+          - Full Web Documentation: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/documentation/swiftuna
+          EOF
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
