@@ -1,96 +1,52 @@
-name: Deploy DocC Documentation
+# .github/workflows/deploy-pages.yml
+name: deploy-pages
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'Sources/Swiftuna/**'
-      - 'Package.*'
-      - '.github/workflows/docs.yml'
+  workflow_run:
+    workflows: ["update-linux-binaries"]
+    branches: [main]
+    types:
+      - completed
   workflow_dispatch:
-
-concurrency:
-  group: "pages-${{ github.ref }}"
-  cancel-in-progress: true
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  build-and-deploy:
+  deploy:
+    # Only run if manual trigger or if the upstream CI run succeeded
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04 # Swift 6.3 is pre-installed out of the box
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: macos-14
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Cache SPM build artifacts across workflow runs
-      - name: Cache Swift PM Build Artifacts
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
-
-      # Cache Cargo registry and FFI targets if re-compilation is needed
-      - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            crates/rustuna-ffi/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('crates/rustuna-ffi/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Ensure Rust FFI Static Library Exists
+      - name: Install system dependencies
         run: |
-          ARTIFACT="Sources/LibRustuna/artifacts/macos-arm64/librustuna_ffi.a"
-          if [ ! -f "$ARTIFACT" ]; then
-            echo "Building Rust FFI binary..."
-            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
-            mkdir -p Sources/LibRustuna/artifacts/macos-arm64
-            strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
-            cp crates/rustuna-ffi/target/release/librustuna_ffi.a "$ARTIFACT"
-          else
-            echo "Rust FFI binary already present."
-          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libsqlite3-dev
 
-      - name: Build Static DocC Documentation
+      - name: Generate DocC documentation
         run: |
-          # Matches your justfile target configuration
-          swift package --allow-writing-to-directory ./docs \
+          swift package \
+            --allow-writing-to-directory ./docs \
             generate-documentation \
             --target Swiftuna \
-            --disable-indexing \
+            --output-path ./docs \
             --transform-for-static-hosting \
-            --hosting-base-path ${{ github.event.repository.name }} \
-            --output-path ./docs
+            --hosting-base-path "${{ github.event.repository.name }}"
 
-      - name: Prepare DocC and Context7 Assets
-        run: |
-          # Bypass GitHub Pages Jekyll processing (required for DocC assets)
-          touch ./docs/.nojekyll
-
-          # Expose an llms.txt entrypoint for AI scrapers (Context7)
-          cat << 'EOF' > ./docs/llms.txt
-          # Swiftuna Documentation
-          > Swiftuna is an optimization and hyperparameter tuning engine written in Swift with Rust FFI backend support.
-
-          ## Key Concepts & Modules
-          - Target: Swiftuna
-          - Full Web Documentation: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/documentation/swiftuna
-          EOF
-
-      - name: Upload Pages Artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./docs
