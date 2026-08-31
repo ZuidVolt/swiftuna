@@ -1,16 +1,22 @@
 // swift-tools-version: 6.4
 
-import Foundation
 import PackageDescription
 
-let rustConfig = ProcessInfo.processInfo.environment["RUST_CONFIGURATION"] ?? "debug"
-let rustLibDir = "crates/rustuna-ffi/target/\(rustConfig)"
+// Vendored Rust staticlibs — checked in via Tools/package-binaries.py
+// Always release (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
+let vendoredMacDir = "Sources/LibRustuna/artifacts/macos-arm64"
+#if arch(x86_64)
+    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-x86_64"
+#elseif arch(arm64)
+    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-aarch64"
+#else
+    let vendoredLinuxDir = "Sources/LibRustuna/artifacts/linux-x86_64"
+#endif
 
 let linkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(rustLibDir)", "-lrustuna_ffi"])
+    .unsafeFlags(["-L\(vendoredMacDir)", "-lrustuna_ffi"], .when(platforms: [.macOS])),
+    .unsafeFlags(["-L\(vendoredLinuxDir)", "-lrustuna_ffi"], .when(platforms: [.linux])),
 ]
-// For Linux with system sqlite: build with --features sqlite-system and link -lsqlite3
-// let linuxLinkerSettings: [LinkerSetting] = [.linkedLibrary("sqlite3"), .unsafeFlags(["-L\(rustLibDir)", "-lrustuna_ffi"])]
 
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
@@ -49,7 +55,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/x-sheep/swift-property-based.git", from: "2.0.0"),
-        .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.4.3")
+        .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.4.3"),
     ],
     targets: [
         .target(

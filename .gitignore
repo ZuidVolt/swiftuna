@@ -13,4 +13,9 @@ xcuserdata/
 DerivedData/
 *.xcodeproj
 crates/rustuna-ffi/target/
+# keep vendored LibRustuna artifacts (checked-in per user request)
+!Sources/LibRustuna/artifacts/
+!Sources/LibRustuna/artifacts/**/*
 docs/
+__pycache__/
+.DS_Store

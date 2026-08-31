@@ -1,0 +1,94 @@
+name: update-linux-binaries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/rustuna-ffi/**"
+      - "Sources/LibRustuna/include/**"
+      - ".github/workflows/update-linux-binaries.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-linux-binaries
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: checkout swiftuna
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: shallow clone ref/rustuna
+        run: |
+          rm -rf ref/rustuna
+          git clone --depth 1 --single-branch https://github.com/optuna/rustuna.git ref/rustuna
+          ls ref/rustuna/rustuna_storage/Cargo.toml
+
+      - name: check if rebuild needed (hash inputs)
+        id: check-hash
+        run: |
+          if python3 Tools/hash_rustuna.py --check-manifest; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Up to date — skipping cargo build"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: rust toolchain
+        if: steps.check-hash.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check-hash.outputs.skip != 'true'
+        with:
+          workspaces: crates/rustuna-ffi -> target
+          cache-all-crates: "true"
+
+      - name: build linux x86_64
+        if: steps.check-hash.outputs.skip != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libsqlite3-dev
+          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target x86_64-unknown-linux-gnu
+          strip --strip-unneeded crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a || strip crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a || true
+          mkdir -p Sources/LibRustuna/artifacts/linux-x86_64
+          cp crates/rustuna-ffi/target/x86_64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a
+          ls -lh Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a
+          file Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a || true
+
+      - name: build linux aarch64 (best-effort)
+        if: steps.check-hash.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu || true
+          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu
+          strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a || true
+          mkdir -p Sources/LibRustuna/artifacts/linux-aarch64
+          cp crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || echo "aarch64 not built"
+          ls -lh Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || true
+
+      - name: generate manifest
+        if: steps.check-hash.outputs.skip != 'true'
+        run: python3 Tools/generate_manifest.py
+
+      - name: commit and push if changed
+        if: steps.check-hash.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a Sources/LibRustuna/artifacts/manifest.json || true
+          if git diff --cached --quiet; then
+            echo "no changes"
+            exit 0
+          fi
+          git commit -m "chore: update linux binaries [skip ci]"
+          git push
