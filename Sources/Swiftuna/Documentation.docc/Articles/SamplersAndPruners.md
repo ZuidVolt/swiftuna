@@ -1,60 +1,79 @@
-# Samplers & Early Stopping Pruners
+# Samplers and early stopping pruners
 
-A comprehensive architectural guide to parameter sampling algorithms and early stopping pruners in Swiftuna.
+Guide to parameter sampling algorithms and early stopping pruners in Swiftuna.
 
 ## Overview
 
-Hyperparameter optimization consists of two complementary components:
-1. **Samplers** (Propose candidate parameter configurations)
-2. **Pruners** (Terminate unpromising trial trajectories early)
+Hyperparameter optimization pairs two distinct mechanisms:
+1. **Samplers** propose parameter configurations by building surrogate models from previous trial evaluations.
+2. **Pruners** monitor intermediate step values (such as per-epoch loss) and terminate unpromising trials early to save compute time.
 
 ---
 
-## Sampler Comparison Matrix
+## Sampler comparison
 
-| Sampler | Strategy | Best Use Case | Multi-Objective | Constraints |
+| Sampler | Strategy | Best for | Multi-objective | Constraints |
 | :--- | :--- | :--- | :--- | :--- |
-| ``TPESampler`` | Tree-structured Parzen Estimator | General continuous & discrete HPO | ✅ (MOTPE) | ✅ Feasibility Partitioning |
-| ``QMCSampler`` | Quasi-Monte Carlo (Sobol) | Uniform space-filling, exploratory sweeps | ❌ Single | ❌ Unconstrained |
-| ``GridSampler`` | Cartesian product grid | Small discrete search spaces, ablation studies | ❌ Single | ❌ Unconstrained |
-| ``NSGAIISampler`` | Genetic Evolutionary Algorithm | Multi-objective Pareto frontier discovery | ✅ Native | ✅ Constrained-Domination |
-| ``RandomSampler`` | Uniform random search | Fast unguided baseline | ✅ Multi-Objective | ❌ Unconstrained |
+| ``TPESampler`` | Tree-structured Parzen Estimator | General continuous and discrete HPO | Yes (MOTPE) | Feasibility partitioning |
+| ``QMCSampler`` | Quasi-Monte Carlo (Sobol) | Low-discrepancy space filling | Single only | No |
+| ``GridSampler`` | Cartesian product grid | Small discrete spaces, ablation sweeps | Single only | No |
+| ``NSGAIISampler`` | Genetic evolutionary algorithm | Multi-objective Pareto frontier discovery | Yes (Native) | Constrained-domination |
+| ``RandomSampler`` | Uniform random search | Fast baseline, high-noise environments | Yes | No |
 
-### 1. Tree-structured Parzen Estimator (``TPESampler``)
-TPE fits two Gaussian Mixture Models over observed parameter values:
-- $\ell(x)$: Density of parameters producing top-performing objective values
-- $g(x)$: Density of remaining parameters
+---
 
-Candidates are selected to maximize the expected improvement ratio $\frac{\ell(x)}{g(x)}$.
+## Deep dive: Sampling algorithms
+
+### Tree-structured Parzen Estimator (``TPESampler``)
+
+TPE is the default sampler in Swiftuna. Instead of modeling the objective function $P(y \mid x)$ directly with Gaussian Processes, TPE uses Bayes' rule to model parameter distributions given the objective value:
+
+$$P(x \mid y) = \begin{cases} \ell(x) & \text{if } y < y^* \\ g(x) & \text{if } y \ge y^* \end{cases}$$
+
+Here, $y^*$ is a splitting quantile separating the top-performing trials from the rest. Candidates are sampled to maximize the Expected Improvement ratio:
+
+$$\text{EI}(x) \propto \frac{\ell(x)}{g(x)}$$
+
+TPE fits Parzen window density estimators (Gaussian Mixture Models) for continuous variables and categorical frequency tables for discrete variables.
 
 ```swift
-// Seeded for reproducible optimization
+// Default TPE sampler with optional seed for deterministic reproducibility
 let sampler = TPESampler(seed: 42)
 let study = try Swiftuna.createStudy(sampler: sampler)
 ```
 
-### 2. Quasi-Monte Carlo Sobol Sequence (``QMCSampler``)
-QMC uses Antonov-Saleev Gray codes and Joe-Kuo direction numbers up to 1,024 dimensions to systematically eliminate space clustering and empty voids.
+### Quasi-Monte Carlo Sobol sequences (``QMCSampler``)
+
+Quasi-Monte Carlo methods generate deterministic low-discrepancy sequences designed to cover multi-dimensional spaces more uniformly than pseudo-random sampling.
+
+Swiftuna's `QMCSampler` uses Antonov-Saleev Gray codes and Joe-Kuo direction numbers up to 1,024 dimensions. QMC is effective for exploratory parameter sweeps and initial global coverage before switching to surrogate-guided search.
 
 ```swift
 let sampler = QMCSampler(seed: 123)
 let study = try Swiftuna.createStudy(sampler: sampler)
 ```
 
-### 3. Exhaustive Grid Search (``GridSampler``)
-Precomputes Cartesian products across discrete options, shuffling evaluation order deterministically:
+### Exhaustive grid search (``GridSampler``)
+
+`GridSampler` precomputes the full Cartesian product across all parameter domains. When a seed is specified, evaluation order is shuffled deterministically:
 
 ```swift
 let grid: [String: GridSampler.ValueList] = [
-    "lr": [0.01, 0.001],
-    "batch_size": [32, 64],
-    "optimizer": .init(categorical: ["adam", "sgd"])
+    "learning_rate": [0.001, 0.01, 0.1],
+    "batch_size": [16, 32, 64],
+    "optimizer": .init(categorical: ["adamw", "sgd"])
 ]
-let sampler = GridSampler(searchSpace: grid, seed: 99)
+
+let sampler = GridSampler(searchSpace: grid, seed: 42)
+let study = try Swiftuna.createStudy(sampler: sampler)
 ```
 
-### 4. Non-dominated Sorting Genetic Algorithm II (``NSGAIISampler``)
-NSGA-II maintains a candidate population across generations, ranking individuals by non-domination rank and crowding distance to produce a diverse Pareto frontier.
+### Genetic evolutionary search (``NSGAIISampler``)
+
+NSGA-II (Non-dominated Sorting Genetic Algorithm II) is designed for multi-objective optimization. It maintains a population of candidates across generations:
+1. **Non-dominated Sorting:** Groups candidates into Pareto hierarchical ranks.
+2. **Crowding Distance:** Favors solutions located in less crowded areas along the Pareto frontier to maintain exploration diversity.
+3. **Constrained-Domination:** Automatically enforces constraints without penalty tuning.
 
 ```swift
 let sampler = NSGAIISampler(
@@ -67,45 +86,84 @@ let sampler = NSGAIISampler(
 
 ---
 
-## Pruner Comparison Matrix
+## Pruner comparison
 
-| Pruner | Mechanism | Best Use Case |
+| Pruner | Mechanism | Best for |
 | :--- | :--- | :--- |
-| ``MedianPruner`` | Stops trials worse than 50th percentile at same step | Deep learning training epochs |
-| ``PercentilePruner`` | Stops trials outside top $P\%$ threshold | Aggressive pruning |
-| ``SuccessiveHalvingPruner`` | Multi-armed bandit geometric rungs ($1/\eta$ retention) | Iterative resource allocation (ASHA) |
-| ``HyperbandPruner`` | Multi-bracket Successive Halving | Large-scale neural network architecture search |
-| ``PatientPruner`` | Grace-period delay around any pruner | Noisy learning curves, warm-up phases |
-| ``ThresholdPruner`` | Absolute numerical upper/lower bounds | Safety limits, divergence prevention |
-| ``NopPruner`` | No-op baseline (never prunes) | Debugging, fixed-budget evaluations |
+| ``MedianPruner`` | Stops trials performing below the 50th percentile at the same step | Neural network training loops |
+| ``PercentilePruner`` | Stops trials outside a target top $P\%$ threshold | Aggressive resource filtering |
+| ``SuccessiveHalvingPruner`` | Geometric resource rungs with $1/\eta$ retention (ASHA) | Resource allocation sweeps |
+| ``HyperbandPruner`` | Multi-bracket Successive Halving | Neural architecture search |
+| ``PatientPruner`` | Delays pruning decisions across a window of steps | Noisy learning curves |
+| ``ThresholdPruner`` | Cuts off trials crossing hard numerical bounds | Divergence limits |
+| ``NopPruner`` | Never stops trials | Baseline runs, fixed budgets |
 
-### Successive Halving (``SuccessiveHalvingPruner``)
-Trials start with `minResource` evaluations. At each geometric rung $r_k = \text{minResource} \cdot \eta^k$, only the top $1/\eta$ fraction is promoted.
+---
+
+## Deep dive: Early stopping pruners
+
+### Median and Percentile pruners
+
+`MedianPruner` stops an active trial if its intermediate value at step $t$ is worse than the median (50th percentile) of previous completed or pruned trials at the exact same step.
+
+Parameters:
+- `nStartupTrials`: Number of initial trials run completely to build a reliable baseline before pruning starts.
+- `nWarmupSteps`: Number of initial steps within each trial evaluated without pruning.
+- `intervalSteps`: Frequency of pruning checks (e.g. check every 2 epochs).
 
 ```swift
-let pruner = SuccessiveHalvingPruner(
-    minResource: 1,      // First evaluation at epoch 1
-    reductionFactor: 3,  // Promote top 1/3 at each rung
-    minEarlyStoppingRate: 0
+let pruner = MedianPruner(
+    nStartupTrials: 5,
+    nWarmupSteps: 10,
+    intervalSteps: 2
 )
 ```
 
-### Hyperband (``HyperbandPruner``)
-Hyperband balances exploration vs exploitation by running multiple brackets of Successive Halving with varied early stopping aggressiveness:
+### Successive Halving (ASHA) and Hyperband
+
+Successive Halving allocates resources geometrically across rungs:
+
+$$r_k = \text{minResource} \cdot \eta^k$$
+
+At each rung, only the top $1/\eta$ fraction of trials is promoted to continue to the next rung.
+
+`HyperbandPruner` manages several brackets of Successive Halving with varying aggressive early-stopping rates. Trials are assigned to brackets deterministically based on `trialNumber % nBrackets`, making it thread-safe for parallel workers.
 
 ```swift
 let pruner = HyperbandPruner(
-    minResource: 1,
-    maxResource: 81,
-    reductionFactor: 3
+    minResource: 1,      // First rung evaluated at epoch 1
+    maxResource: 81,     // Maximum training epochs
+    reductionFactor: 3   // Retain top 1/3 at each rung
 )
 let study = try Swiftuna.createStudy(pruner: pruner)
 ```
 
-### Patient Pruner (``PatientPruner``)
-To prevent early stopping on temporary spikes or noisy loss plateaus, wrap any base pruner with a patience buffer:
+### Patient pruner
+
+Training curves can be noisy, with temporary loss spikes that trigger premature pruning. `PatientPruner` wraps any underlying pruner, requiring it to signal pruning for `patience` consecutive steps before actually stopping the trial:
 
 ```swift
 let basePruner = MedianPruner(nStartupTrials: 5)
 let robustPruner = PatientPruner(wrappedPruner: basePruner, patience: 3)
+```
+
+---
+
+## Reporting intermediate values
+
+Inside your training loop, call ``Trial/report(_:step:pruneIfWorse:)``:
+
+```swift
+try study.optimize(nTrials: 50) { trial in
+    var model = initializeModel()
+    
+    for epoch in 1...100 {
+        let loss = model.trainEpoch()
+        
+        // Reports intermediate value; throws trialPruned if pruner triggers
+        try trial.report(loss, step: epoch, pruneIfWorse: true)
+    }
+    
+    return model.finalValidationLoss()
+}
 ```

@@ -1,41 +1,25 @@
-# Observability & Telemetry
+# Observability and telemetry
 
-Instrument Swiftuna optimization runs with zero-overhead tracing, OpenTelemetry, and structured logging.
+Instrument Swiftuna optimization runs with tracing, OpenTelemetry, and structured logging.
 
 ## Overview
 
-In production machine learning systems, monitoring trial throughput, execution duration, and failure rates is essential. Swiftuna includes a zero-dependency observability layer built around ``SwiftunaTelemetry``, ``TelemetryTracer``, and ``TelemetrySpan``.
-
-- **Zero-Overhead Default**: When no tracer is registered, calls resolve to inline no-ops (``NoOpTelemetryTracer``) with zero CPU overhead.
-- **OpenTelemetry Ready**: Easily bridges to `swift-distributed-tracing` and OpenTelemetry collectors.
-
----
-
-## The Telemetry Architecture
-
-```
-┌────────────────────────────────────────────────────────────┐
-│                    Optimization Loop                       │
-│    trial.suggest(...) ──> objective() ──> trial.tell()     │
-└─────────────────────────────┬──────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────┐
-│             SwiftunaTelemetry.shared.tracer                │
-│    startSpan("swiftuna.trial", attributes: [...])          │
-└──────────────┬──────────────────────────────┬──────────────┘
-               │                              │
-               ▼                              ▼
-    ┌──────────────────────┐      ┌──────────────────────┐
-    │  OpenTelemetry Span  │      │  Apple os.Logger     │
-    └──────────────────────┘      └──────────────────────┘
-```
+In production optimization pipelines, monitoring trial throughput, execution duration, parameter distributions, and failure rates is necessary. Swiftuna provides a zero-dependency observability layer built around three core types:
+- ``SwiftunaTelemetry``: Thread-safe global telemetry registry.
+- ``TelemetryTracer``: Factory interface for starting trace spans.
+- ``TelemetrySpan``: Active trace span interface for recording attributes and completion status.
 
 ---
 
-## Implementing a Custom Telemetry Tracer
+## Zero-overhead design
 
-Conform to ``TelemetryTracer`` and ``TelemetrySpan`` to forward metrics to your monitoring pipeline:
+When no custom tracer is registered, calls to `SwiftunaTelemetry.shared.tracer` resolve to ``NoOpTelemetryTracer`` with inline empty implementations. The compiler eliminates tracing calls entirely in release builds, incurring zero runtime CPU or memory overhead during sub-millisecond optimization loops.
+
+---
+
+## Implementing a custom telemetry tracer
+
+To forward telemetry events to your logging pipeline or an OpenTelemetry collector, implement ``TelemetryTracer`` and ``TelemetrySpan``:
 
 ```swift
 import Swiftuna
@@ -60,7 +44,12 @@ final class ConsoleLoggingSpan: TelemetrySpan, @unchecked Sendable {
     }
 
     func end(status: SpanStatus) {
-        print("[Span End] \(name) Status: \(status) Final Attributes: \(attrs)")
+        switch status {
+        case .ok:
+            print("[Span Complete] \(name): \(attrs)")
+        case .error(let message):
+            print("[Span Failed] \(name): \(message) (\(attrs))")
+        }
     }
 }
 
@@ -73,20 +62,27 @@ final class ConsoleLoggingTracer: TelemetryTracer {
 
 ---
 
-## Registering the Global Tracer
+## Registering the global tracer
 
-Register your tracer before starting studies:
+Register your tracer before launching optimization runs:
 
 ```swift
-// Register tracer globally
+// 1. Register tracer globally
 SwiftunaTelemetry.shared.registerTracer(ConsoleLoggingTracer())
 
-let study = try Swiftuna.createStudy(name: "monitored_hpo")
-try study.optimize(nTrials: 10) { trial in
+// 2. Run optimization study with automatic instrumentation
+let study = try Swiftuna.createStudy(name: "monitored_study")
+try study.optimize(nTrials: 20) { trial in
     let x = try trial.suggest("x", in: -5.0...5.0)
     return x * x
 }
 
-// Restore default no-op tracing when done
+// 3. Restore default no-op tracer when finished
 SwiftunaTelemetry.shared.registerTracer(nil)
 ```
+
+During each trial, Swiftuna automatically records:
+- `study.name`: The identifier of the enclosing study.
+- `trial.number`: The sequential index of the running trial.
+- `trial.status`: Final completion status (`"complete"`, `"pruned"`, or `"fail"`).
+- `trial.duration_ms`: Wall-clock execution duration of the trial evaluation closure.

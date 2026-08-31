@@ -1,26 +1,29 @@
-# Storage Backends & Optuna Dashboard
+# Storage backends and Optuna Dashboard
 
 Persist optimization trials across process restarts, scale concurrent workers, and visualize study progress in real time with Optuna Dashboard.
 
 ## Overview
 
-Swiftuna provides three storage backends:
-1. ``StorageBackend/inMemory``: Fast in-memory storage for single-process jobs.
-2. ``StorageBackend/sqlite(path:)``: SQLite database 100% byte-compatible with Python Optuna and `optuna-dashboard`.
-3. ``StorageBackend/journal(path:)``: Append-only lockless journal log for multi-process / HPC environments.
+Swiftuna provides three storage backends designed for different execution environments:
+
+| Storage Backend | Persistence | Concurrency Model | Best for |
+| :--- | :--- | :--- | :--- |
+| ``StorageBackend/inMemory`` | RAM only | Thread-safe in-process | Fast unit tests, script evaluations |
+| ``StorageBackend/sqlite(path:)`` | Disk (SQLite3) | SQLite file-locking / WAL | Multi-worker local runs, Optuna Dashboard |
+| ``StorageBackend/journal(path:)`` | Disk (Append-only log) | Lockless append | Multi-process clusters, shared NFS filesystems |
 
 ---
 
-## SQLite Storage & Resuming Studies
+## SQLite storage and resuming studies
 
-Persisting studies to SQLite allows long-running experiments to survive process restarts and accumulate trials incrementally.
+Persisting studies to SQLite lets long optimization jobs accumulate trials across restarts or multiple worker processes:
 
 ```swift
 import Swiftuna
 
 let storage = StorageBackend.sqlite(path: "experiments.db")
 
-// Create or resume study if already present
+// Resume existing study if found; otherwise create a new one
 let study = try Swiftuna.createStudy(
     name: "resnet_cifar10",
     direction: .minimize,
@@ -36,59 +39,65 @@ try study.optimize(nTrials: 50) { trial in
 
 ---
 
-## Real-Time Visualization with Optuna Dashboard
+## Real-time visualization with Optuna Dashboard
 
-Because Swiftuna's SQLite schema is 100% compatible with Optuna's `RDBStorage`, you can run `optuna-dashboard` directly against Swiftuna databases:
+Swiftuna's SQLite schema matches Python Optuna's `RDBStorage` byte-for-byte. You can run `optuna-dashboard` directly against any Swiftuna SQLite database:
 
 ```bash
-# 1. Install optuna-dashboard via pip or uv
+# 1. Install optuna-dashboard via pip
 pip install optuna-dashboard
 
-# 2. Launch dashboard pointing to your Swiftuna SQLite database
+# 2. Start the dashboard server pointing to your Swiftuna database
 optuna-dashboard sqlite:///experiments.db
 ```
 
 Open `http://127.0.0.1:8080` in your web browser to explore:
-- Interactive optimization history plots
-- Hyperparameter slice and contour plots
-- Empirical Pareto frontier scatter plots
-- Real-time trial timeline metrics
+- **Optimization History:** Interactive curves tracking best objective values over time.
+- **Pareto Frontier:** 2D and 3D scatter plots for multi-objective studies.
+- **Parameter Relationships:** Slice and contour plots highlighting interaction between parameters.
+- **Trial Timelines:** Execution duration and intermediate step reporting curves.
 
 ---
 
-## Lockless Journal Storage for High Concurrency
+## Lockless journal storage for high-concurrency clusters
 
-When running hundreds of concurrent workers on shared network filesystems (NFS/Lustre), SQLite table locking can create latency bottlenecks. The ``StorageBackend/journal(path:)`` engine uses an append-only log format:
+When running hundreds of worker tasks on shared network filesystems (such as NFS or Lustre), SQLite file-locking can cause lock contention and latency spikes.
+
+The ``StorageBackend/journal(path:)`` engine uses an append-only log format:
+- Workers append new trial events directly to the log file without table locks.
+- State reconciliation happens in memory on demand.
 
 ```swift
 let storage = StorageBackend.journal(path: "/shared/nfs/cluster_run.log")
 let study = try Swiftuna.createStudy(
-    name: "distributed_hpc",
+    name: "distributed_cluster",
     storage: storage
 )
 ```
 
 ---
 
-## Storage Lifecycle Operations
+## Storage lifecycle operations
 
-Query, filter, copy, and delete studies in any storage backend:
+Manage studies programmatically across persistent databases:
 
 ```swift
 let storage = StorageBackend.sqlite(path: "experiments.db")
 
-// List all studies
+// 1. List all studies and inspect metadata
 let summaries = try storage.studies()
-for s in summaries.minTrials(10).sortedByTrialCount() {
-    print("Study \(s.name): \(s.trialCount) trials")
+for summary in summaries.minTrials(10).sortedByTrialCount() {
+    print("Study \(summary.name): \(summary.trialCount) trials recorded")
 }
 
-// Copy a study from SQLite to In-Memory for rapid analysis
-if let source = try Swiftuna.loadStudy(name: "resnet_cifar10", storage: storage) {
-    let memStudy = try source.copy(to: .inMemory, as: "analysis_copy")
-    print("Copied \(try memStudy.trials.count) trials to RAM")
+// 2. Load an existing study
+if let study = try Swiftuna.loadStudy(name: "resnet_cifar10", storage: storage) {
+    print("Loaded study '\(study.name)' with best value \(try study.bestValue)")
+    
+    // 3. Copy from SQLite to in-memory for rapid analytical sweeps
+    let inMemoryCopy = try study.copy(to: .inMemory, as: "fast_sweep")
 }
 
-// Delete a study and cascade remove its trials
+// 4. Delete an old study and cascade remove all its trials
 try storage.deleteStudy(named: "old_experiment")
 ```

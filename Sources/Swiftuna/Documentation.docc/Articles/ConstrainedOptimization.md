@@ -1,31 +1,34 @@
-# Constrained & Multi-Objective Optimization
+# Constrained and multi-objective optimization
 
-Learn how to enforce mathematical constraints and discover Pareto-optimal trade-offs across multiple competing objectives.
+Enforce mathematical constraints and discover Pareto trade-offs across competing objectives.
 
 ## Overview
 
-Real-world machine learning and systems engineering rarely have a single unconstrained goal. For example:
-- **Constrained Problem**: Minimize classification loss subject to memory usage $\le 4 \text{ GB}$ and inference latency $\le 20 \text{ ms}$.
-- **Multi-Objective Problem**: Maximize accuracy while simultaneously minimizing model size and inference power consumption.
-
-Swiftuna natively supports both constrained optimization and multi-objective Pareto front analysis.
+Real-world engineering problems rarely have a single unconstrained objective:
+- **Constrained optimization:** Minimize loss while ensuring peak memory $\le 4 \text{ GB}$ and inference latency $\le 20 \text{ ms}$.
+- **Multi-objective optimization:** Maximize classification accuracy while minimizing model parameters and energy consumption.
 
 ---
 
-## Mathematical Constraint Formulation
+## Constraint formulation
 
-In Swiftuna, constraints follow standard numerical optimization convention:
+Swiftuna follows the standard mathematical optimization convention:
 
 $$c_i(x) \le 0.0 \iff \text{Feasible (Satisfied)}$$
 $$c_i(x) > 0.0 \iff \text{Infeasible (Violation magnitude)}$$
 
-Unlike naive penalty function methods (which distort the objective landscape and require manual hyperparameter tuning), Swiftuna's samplers handle constraints natively without penalty hyperparameters:
-- ``TPESampler``: Feasible trials are strictly prioritized when building Parzen density models; infeasible trials are ordered by total violation magnitude.
-- ``NSGAIISampler``: Implements Deb's constrained-domination tournament selection.
+### Why penalty functions fall short
+Traditional penalty formulations ($L = \text{loss} + \lambda \sum \max(0, c_i(x))^2$) require careful tuning of the penalty weight $\lambda$. If $\lambda$ is too small, the optimizer violates constraints; if too large, it creates steep numerical ravines that trap Bayesian surrogates.
 
-### Declaring Strongly-Typed Constraint Keys
+Swiftuna avoids penalty weights entirely:
+- ``TPESampler`` splits trials into feasible and infeasible groups. Density estimation focuses on feasible solutions, ranking infeasible trials solely by their violation magnitude.
+- ``NSGAIISampler`` uses Deb's constrained-domination rules during tournament selection. Feasible solutions always dominate infeasible solutions, regardless of objective value.
 
-Define static ``ConstraintKey`` types to eliminate string typos:
+---
+
+## Declaring typed constraint keys
+
+Define static ``ConstraintKey`` types to avoid string typos and enforce clear schema definitions:
 
 ```swift
 import Swiftuna
@@ -39,11 +42,13 @@ public enum LatencyBound: ConstraintKey {
 }
 ```
 
-### Recording Constraints in an Objective Closure
+### Recording constraints during trial evaluation
+
+Compute the difference between measured metrics and your threshold:
 
 ```swift
 let study = try Swiftuna.createStudy(
-    name: "constrained_resnet",
+    name: "constrained_tuning",
     direction: .minimize
 )
 
@@ -53,7 +58,7 @@ try study.optimize(nTrials: 100) { trial in
 
     let (valLoss, memMB, latencyMs) = evaluateModel(batchSize: batchSize, lr: lr)
 
-    // Enforce memMB <= 4096 MB and latencyMs <= 25.0 ms
+    // Satisfied when memMB <= 4096 MB and latencyMs <= 25.0 ms
     trial[constraint: MemoryBound.self] = memMB - 4096.0
     trial[constraint: LatencyBound.self] = latencyMs - 25.0
 
@@ -61,37 +66,37 @@ try study.optimize(nTrials: 100) { trial in
 }
 ```
 
-### Querying Feasible Results
+### Querying feasible results
 
-Use the functional sequence extensions to inspect feasible vs infeasible trials:
+Use analytical sequence extensions to filter and find the best feasible trial:
 
 ```swift
 let allTrials = try study.trials
 
-// Filter only trials meeting all constraints
-let feasibleTrials = allTrials.feasible().completed()
-print("Feasible trials found: \(feasibleTrials.count) / \(allTrials.count)")
+let feasibleCount = allTrials.feasible().completed().count
+print("Feasible trials found: \(feasibleCount) / \(allTrials.count)")
 
 if let bestFeasible = allTrials.bestFeasible(direction: .minimize) {
     print("Optimal feasible trial #\(bestFeasible.number) with loss \(bestFeasible.value ?? 0.0)")
     print("Parameters: \(bestFeasible.params)")
+    print("Constraints: \(bestFeasible.constraints)")
 }
 ```
 
 ---
 
-## Multi-Objective Pareto Optimization
+## Multi-objective Pareto optimization
 
-When optimizing multiple objectives, no single solution is universally best. Instead, the optimizer seeks the **Pareto frontier**—the set of non-dominated solutions where improving one objective degrades another.
+In multi-objective optimization, no single configuration minimizes all objectives at once. Instead, the optimizer finds the **Pareto frontier**, the set of non-dominated solutions where improving one objective necessarily worsens another.
 
-### Creating a Multi-Objective Study
+### Creating a multi-objective study
 
-Specify an array of ``Direction`` values corresponding to each objective:
+Pass an array of ``Direction`` values matching the returned objective vector:
 
 ```swift
 let study = try Swiftuna.createStudy(
     name: "accuracy_vs_latency",
-    directions: [.maximize, .minimize], // Obj 0: Accuracy, Obj 1: Latency (ms)
+    directions: [.maximize, .minimize], // Objective 0: Accuracy, Objective 1: Latency (ms)
     sampler: NSGAIISampler(populationSize: 40)
 )
 
@@ -106,17 +111,17 @@ try study.optimize(nTrials: 100) { trial in
 }
 ```
 
-### Extracting the Pareto Frontier
+### Extracting the Pareto frontier
 
-Retrieve non-dominated solutions via ``Study/bestTrials``:
+Read non-dominated solutions via ``Study/bestTrials``:
 
 ```swift
 let paretoFront = try study.bestTrials
-print("Found \(paretoFront.count) Pareto-optimal trade-off configurations:")
+print("Discovered \(paretoFront.count) Pareto-optimal trade-offs:")
 
 for trial in paretoFront {
-    let acc = trial.values[0]
-    let lat = trial.values[1]
-    print("Trial #\(trial.number): Accuracy = \(String(format: "%.2f%%", acc * 100)), Latency = \(String(format: "%.1f ms", lat))")
+    let accuracy = trial.values[0]
+    let latency = trial.values[1]
+    print("Trial #\(trial.number): Accuracy = \(String(format: "%.2f%%", accuracy * 100)), Latency = \(String(format: "%.1f ms", latency))")
 }
 ```

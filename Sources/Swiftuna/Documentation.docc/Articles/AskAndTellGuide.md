@@ -1,37 +1,39 @@
-# The Ask-and-Tell Interface
+# The ask-and-tell interface
 
-Master manual execution loops, distributed workers, batch suggestions, and Swift 6 non-copyable trial semantics.
+Run manual execution loops, distributed worker pools, batch evaluations, and manage Swift 6 non-copyable trial ownership.
 
 ## Overview
 
-While ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` provides a convenient automated loop for in-process evaluations, real-world systems often require:
-- Asynchronous or distributed evaluation across cluster nodes
-- Batch evaluations on GPUs
-- External process execution (e.g. CLI tools, Docker containers, remote APIs)
-- Custom error recovery and trial retry policies
+The standard ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` method runs a synchronous loop in a single process. However, real-world machine learning systems frequently demand more control:
+- Distributing trials across worker nodes or GPU instances
+- Grouping parameter candidates into batches for parallel tensor execution
+- Interfacing with external subprocesses, Docker containers, or remote microservices
+- Implementing custom trial retry policies or error recovery
 
-The **Ask-and-Tell** interface decouples parameter generation (``Study/ask()``) from result recording (``Study/tell(consuming:value:state:)``).
+The **ask-and-tell** interface splits parameter generation (``Study/ask()``) from result reporting (``Study/tell(consuming:value:state:)``).
 
 ---
 
-## Non-Copyable `~Copyable` Semantics
+## Non-copyable trial semantics
 
-In Swiftuna, ``Trial`` is a non-copyable type (`~Copyable`). This brings critical safety guarantees at compile time:
-- **No Use-After-Consume**: Once a trial is passed to `tell(consuming:)`, it cannot be accessed again.
-- **No Accidental Duplication**: Multiple workers cannot evaluate the exact same trial instance.
+In Swiftuna, ``Trial`` is a non-copyable type (`~Copyable`). This brings compile-time safety to optimization workflows:
+- **No use-after-consume.** Once a trial is passed to `study.tell(consuming:)`, Swift's ownership model marks the variable consumed. Accessing it again causes a compile-time error.
+- **No duplicate execution.** Because non-copyable values cannot be cloned implicitly, multiple workers cannot accidentally run the same trial instance.
 
 ```swift
 var trial = try study.ask()
 let lr = try trial.suggest("lr", in: 1e-4...1e-1)
 let loss = trainModel(lr: lr)
 
-// trial is consumed here - compiler prevents any further access
+// trial is consumed here; subsequent lines cannot touch it
 try study.tell(consuming: trial, value: loss)
 ```
 
 ---
 
-## Standard Sequential Ask-and-Tell Loop
+## Sequential ask-and-tell loop
+
+A basic manual loop queries a trial, runs the workload inside a `do-catch` block, and records either a `.complete` or `.fail` state:
 
 ```swift
 let study = try Swiftuna.createStudy(name: "manual_loop", direction: .minimize)
@@ -45,7 +47,7 @@ for _ in 1...50 {
         
         try study.tell(consuming: trial, value: loss)
     } catch {
-        // Record failure without crashing the optimization loop
+        // If evaluation throws, record the trial as failed without crashing the study
         try study.tell(consuming: trial, state: .fail)
     }
 }
@@ -53,9 +55,43 @@ for _ in 1...50 {
 
 ---
 
-## Concurrent & Distributed Execution with TaskGroups
+## Batch suggestions for GPU parallelism
 
-Because ``Study`` is `Sendable`, you can coordinate concurrent evaluations across Swift structured concurrency `TaskGroup`s:
+When evaluating models on GPUs, running one configuration at a time can leave hardware underutilized. You can ask for a batch of trials upfront, evaluate them as a parallel tensor batch, and report the scores back:
+
+```swift
+let study = try Swiftuna.createStudy(name: "batch_eval", direction: .minimize)
+
+let batchSize = 8
+var activeBatch: [Trial] = []
+
+// 1. Collect a batch of candidate configurations
+for _ in 0..<batchSize {
+    activeBatch.append(try study.ask())
+}
+
+// 2. Suggest parameters for each trial in the batch
+var configs: [(lr: Double, wd: Double)] = []
+for i in 0..<activeBatch.count {
+    let lr = try activeBatch[i].suggest("lr", in: 1e-4...1e-1, log: true)
+    let wd = try activeBatch[i].suggest("wd", in: 1e-6...1e-2, log: true)
+    configs.append((lr: lr, wd: wd))
+}
+
+// 3. Run parallel GPU batch evaluation
+let losses = await evaluateBatchOnGPU(configs)
+
+// 4. Report all results back
+for (trial, loss) in zip(activeBatch, losses) {
+    try study.tell(consuming: trial, value: loss)
+}
+```
+
+---
+
+## Parallel workers with Swift structured concurrency
+
+Because ``Study`` is `Sendable`, multiple asynchronous tasks can safely share a single study instance. Below is a complete example coordinating parallel workers with a Swift `TaskGroup`:
 
 ```swift
 let storage = StorageBackend.sqlite(path: "concurrent_study.db")
@@ -72,7 +108,6 @@ try await withThrowingTaskGroup(of: Void.self) { group in
                 var trial = try study.ask()
                 let x = try trial.suggest("x", in: -5.0...5.0)
                 
-                // Simulate asynchronous GPU evaluation
                 let loss = await evaluateOnGPU(x, worker: workerID)
                 
                 try study.tell(consuming: trial, value: loss)
@@ -85,37 +120,23 @@ try await withThrowingTaskGroup(of: Void.self) { group in
 
 ---
 
-## Multi-Objective Ask-and-Tell
+## Handling discrete search space exhaustion
 
-For studies configured with multiple optimization directions, pass an array of `Double` values to `tell`:
-
-```swift
-let study = try Swiftuna.createStudy(
-    name: "pareto_search",
-    directions: [.maximize, .minimize] // Maximize accuracy, minimize latency
-)
-
-var trial = try study.ask()
-let depth = try trial.suggest("depth", in: 2...10)
-
-let accuracy = evaluateAccuracy(depth: depth)
-let latencyMs = measureLatency(depth: depth)
-
-try study.tell(consuming: trial, values: [accuracy, latencyMs])
-```
-
----
-
-## Handling Discrete Exhaustion
-
-When using a discrete sampler such as ``GridSampler``, ``Study/ask()`` will throw ``SwiftunaError/searchSpaceExhausted(_:)`` when all combinations have been evaluated:
+When using discrete search algorithms like ``GridSampler``, calling ``Study/ask()`` will throw ``SwiftunaError/searchSpaceExhausted(_:)`` when all parameter combinations have been tested. Always catch this error when running open-ended manual loops:
 
 ```swift
-do {
-    var trial = try study.ask()
-    // ... evaluate ...
-    try study.tell(consuming: trial, value: score)
-} catch SwiftunaError.searchSpaceExhausted {
-    print("All grid points evaluated; search is complete!")
+while true {
+    let trial: Trial
+    do {
+        trial = try study.ask()
+    } catch SwiftunaError.searchSpaceExhausted {
+        print("All grid points evaluated. Exiting loop.")
+        break
+    }
+
+    var active = trial
+    let x = try active.suggest("x", in: 1...5)
+    let score = evaluate(x)
+    try study.tell(consuming: active, value: score)
 }
 ```

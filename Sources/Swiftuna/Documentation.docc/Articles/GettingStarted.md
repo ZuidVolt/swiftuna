@@ -1,14 +1,14 @@
-# Getting Started with Swiftuna
+# Getting started with Swiftuna
 
-Learn how to create studies, define search spaces, optimize objectives, and analyze trial results in Swift 6.
+Create studies, define search spaces, optimize objective functions, and analyze trial results.
 
 ## Overview
 
-**Swiftuna** brings high-performance Bayesian hyperparameter optimization (HPO) directly to Swift. Powered by Rustuna's embedded C ABI engine, Swiftuna provides type-safe Swift 6 ergonomics with under 100 ms latency per 1,000 trials.
+Swiftuna provides Swift 6 bindings for Rustuna's embedded optimization engine. It links directly to `librustuna_ffi` through a C ABI bridge with zero heap copies, running 1,000 trials in 97 to 104 ms.
 
 ### Installation
 
-Add Swiftuna as a dependency in your `Package.swift` manifest:
+Add Swiftuna to your `Package.swift` dependencies:
 
 ```swift
 // swift-tools-version: 6.0
@@ -33,14 +33,14 @@ let package = Package(
 
 ---
 
-## Step 1: Create a Study
+## 1. Create a study
 
-A study manages optimization history and orchestrates parameter suggestions. You can create an in-memory study or persist it to SQLite:
+A study manages trial history, orchestrates parameter suggestions, and tracks the best results. You can create an in-memory study for fast single-process jobs, or store trials in SQLite for persistence and visualization.
 
 ```swift
 import Swiftuna
 
-// Single-objective minimization (default)
+// Create an in-memory study for single-objective minimization
 let study = try Swiftuna.createStudy(
     name: "learning_rate_search",
     direction: .minimize,
@@ -48,67 +48,111 @@ let study = try Swiftuna.createStudy(
 )
 ```
 
+> Tip: For reproducible runs, pass a seeded sampler such as `TPESampler(seed: 42)` to `createStudy`.
+
 ---
 
-## Step 2: Define Objective & Suggest Hyperparameters
+## 2. Define search spaces and suggest hyperparameters
 
-Pass an objective closure to ``Study/optimize(nTrials:timeout:objective:)-3gyl5``. Inside the closure, interact with the non-copyable ``Trial`` object to suggest parameters:
+Pass an evaluation closure to ``Study/optimize(nTrials:timeout:objective:)-3gyl5``. Inside the closure, interact with the non-copyable ``Trial`` to request parameter candidates.
+
+Swiftuna supports three parameter distribution types:
+
+### Floating-point parameters
+Use `suggest(_:in:step:log:)` with a `ClosedRange<Double>`:
+- **Uniform scale:** When the optimal value is expected to vary linearly (e.g. momentum in `0.8...0.99`).
+- **Log scale (`log: true`):** When exploring across multiple orders of magnitude (e.g. learning rate in `1e-5...1e-1`, weight decay in `1e-6...1e-2`).
+- **Step discretization:** Round candidates to multiples of `step` (e.g. dropout rate in `0.0...0.5` with `step: 0.05`).
+
+### Integer parameters
+Use `suggest(_:in:step:log:)` with a `ClosedRange<Int>`:
+- Great for batch sizes, layer counts, embedding dimensions, or training epoch limits.
+
+### Categorical parameters
+Use `suggest(_:choices:)` with a list of strings or enum cases:
+- Useful for optimizer selection (`["adamw", "sgd", "rmsprop"]`), activation functions (`["relu", "gelu", "swish"]`), or normalization methods.
 
 ```swift
 try study.optimize(nTrials: 100) { trial in
-    // Continuous floating-point range (log scale)
-    let learningRate = try trial.suggest("lr", in: 1e-5...1e-1, log: true)
-
-    // Discrete integer range with step
+    let lr = try trial.suggest("lr", in: 1e-5...1e-1, log: true)
     let batchSize = try trial.suggest("batch_size", in: 16...128, step: 16)
-
-    // Categorical string choices
     let optimizer = try trial.suggest("optimizer", choices: ["adamw", "sgd", "rmsprop"])
 
-    // Evaluate the model objective (e.g. validation loss)
-    let loss = evaluateModel(lr: learningRate, batchSize: batchSize, opt: optimizer)
-    return loss
+    let validationLoss = trainAndEvaluate(lr: lr, batchSize: batchSize, opt: optimizer)
+    return validationLoss
 }
 ```
 
 ---
 
-## Step 3: Inspect the Optimal Results
+## 3. Controlling optimization budgets
 
-Once optimization completes, query the best trial, parameter values, and objective score:
+You can cap optimization by trial count, wall-clock time, or both:
+
+```swift
+// Stop after 200 trials or after 30 minutes, whichever happens first
+try study.optimize(
+    nTrials: 200,
+    timeout: .seconds(1800)
+) { trial in
+    let x = try trial.suggest("x", in: -10.0...10.0)
+    return evaluateModel(x)
+}
+```
+
+If neither `nTrials` nor `timeout` is provided, `optimize` throws an `invalidArgument` error to prevent unintended infinite loops.
+
+---
+
+## 4. Inspecting optimal results
+
+Once the optimization loop completes, read the best trial, parameter values, and objective score:
 
 ```swift
 if let best = try study.bestTrial {
-    print("Optimization finished in \(try study.trials.count) trials")
-    print("Best Trial #\(best.number) achieved value: \(best.value ?? 0.0)")
-    print("Optimal Parameters:")
+    print("Optimization completed across \(try study.trials.count) trials")
+    print("Best trial #\(best.number): objective value = \(best.value ?? 0.0)")
+    print("Optimal parameters:")
     for (param, val) in best.params {
         print("  - \(param): \(val)")
     }
 }
 ```
 
+You can also inspect all recorded trials or filter them using functional sequence extensions:
+
+```swift
+let completed = try study.trials.completed()
+let topFive = completed.sortedByValue().prefix(5)
+
+for trial in topFive {
+    print("Trial #\(trial.number): \(trial.value ?? 0.0)")
+}
+```
+
 ---
 
-## Step 4: Parameter Importance & Sensitivity Analysis
+## 5. Hyperparameter importance with PED-ANOVA
 
-Swiftuna includes built-in PED-ANOVA (Partial Dependence Analysis of Variance) to determine which hyperparameters have the highest impact on objective variance:
+Swiftuna includes built-in PED-ANOVA (Partial Dependence Analysis of Variance) to determine which hyperparameters contribute most to the variance in your objective score:
 
 ```swift
 if case .success(let importances) = study.paramImportances() {
-    print("Hyperparameter Importance Ranking:")
+    print("Hyperparameter sensitivity ranking:")
     for (param, score) in importances.sorted(by: { $0.value > $1.value }) {
         print("  \(param): \(String(format: "%.1f%%", score * 100))")
     }
 }
 ```
 
+This analysis helps you drop uninfluential parameters in subsequent optimization rounds and narrow down high-impact search intervals.
+
 ---
 
-## Next Steps
+## Next steps
 
-- Explore the manual Ask-and-Tell interface: <doc:AskAndTellGuide>
-- Compare available sampling algorithms and early stopping pruners: <doc:SamplersAndPruners>
-- Enforce constraints and multi-objective Pareto optimization: <doc:ConstrainedOptimization>
-- Real-time visualization with SQLite and Optuna Dashboard: <doc:StorageAndDashboard>
-- Type-safe user attributes and custom Codable metadata: <doc:TypeSafeAttributes>
+- Learn the manual ask-and-tell loop and concurrency patterns: <doc:AskAndTellGuide>
+- Choose the best sampler and pruner for your problem: <doc:SamplersAndPruners>
+- Enforce constraints and multi-objective Pareto trade-offs: <doc:ConstrainedOptimization>
+- Persist studies in SQLite and launch Optuna Dashboard: <doc:StorageAndDashboard>
+- Declare type-safe user attributes and Codable schemas: <doc:TypeSafeAttributes>
