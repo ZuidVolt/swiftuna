@@ -69,12 +69,21 @@ jobs:
         if: steps.check-hash.outputs.skip != 'true'
         continue-on-error: true
         run: |
-          sudo apt-get install -y -qq gcc-aarch64-linux-gnu || true
-          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu
-          strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a || true
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross || true
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+          CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+          CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no -C linker=aarch64-linux-gnu-gcc" \
+            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu --verbose || \
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+          CC=aarch64-linux-gnu-gcc \
+          RUSTFLAGS="-C target-cpu=generic -C embed-bitcode=no" \
+            cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml --target aarch64-unknown-linux-gnu
+          aarch64-linux-gnu-strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a 2>/dev/null || strip --strip-unneeded crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a || true
           mkdir -p Sources/LibRustuna/artifacts/linux-aarch64
           cp crates/rustuna-ffi/target/aarch64-unknown-linux-gnu/release/librustuna_ffi.a Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || echo "aarch64 not built"
           ls -lh Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || true
+          file Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a || true
 
       - name: generate manifest
         if: steps.check-hash.outputs.skip != 'true'
