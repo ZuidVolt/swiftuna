@@ -1,18 +1,18 @@
 {
   "version": 1,
-  "inputs_hash": "9aeda021ea653cbcd7edf6e4e29138e07231822e7567700673ff2b3982da270c",
+  "inputs_hash": "3083515f833090b01d14997723af4c8ac6ed7e2d74ff929ed94bfbbc729b7f56",
   "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-  "generated_at": "2026-09-01T01:36:47.941604Z",
+  "generated_at": "2026-09-01T02:14:12.491481Z",
   "artifacts": {
     "linux-x86_64": {
       "file": "Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a",
-      "sha256": "cdd8211a3a881c1a7163cadfee995857b50a365ac69065eaf317d7e352f9d737",
-      "size": 20441664
+      "sha256": "a72f2e660af54f300b26d953c6ee87c1f0b1a6068952ce08cc9b5f13f481c47c",
+      "size": 20472362
     },
     "linux-aarch64": {
       "file": "Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a",
-      "sha256": "1201006729b37292c4d5531f9660beb1b1605a762ea76047f19378c82d9b1fb6",
-      "size": 20560030
+      "sha256": "80fdbd4f63ab567a5932c95006819a2c379fb56f584b9df2383ea2e43247bf6f",
+      "size": 20591456
     }
   }
 }
