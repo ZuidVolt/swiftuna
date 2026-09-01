@@ -515,15 +515,41 @@ public final class Study: @unchecked Sendable {
         guard !states.isEmpty else { return [] }
 
         let mask = states.reduce(UInt32(0)) { $0 | (1 << $1.rawValue) }
-        var trialsPtr: UnsafeMutablePointer<OpaquePointer?>?
-        var count: Int = 0
-        let status = rustuna_study_get_trials_filtered(raw, mask, &trialsPtr, &count)
+        var cJson: UnsafeMutablePointer<CChar>?
+        var jsonLen: Int = 0
+        let status = rustuna_study_get_trials_json(raw, mask, &cJson, &jsonLen)
 
         if status != 0 {
             throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to get filtered trials")
         }
+        guard let cJson, jsonLen > 0 else { return [] }
+        defer { rustuna_string_free(cJson) }
 
-        return parseTrialsBuffer(trialsPtr, count: count)
+        let data = Data(bytesNoCopy: cJson, count: jsonLen, deallocator: .none)
+        guard let payloads = try? Self.trialDecoder.decode([PersistedTrialJSONPayload].self, from: data) else {
+            return []
+        }
+
+        return payloads.map { payload in
+            let state = TrialState(rawValue: payload.state) ?? .fail
+            let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
+            let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
+            let decodedParams = payload.param_values ?? payload.params.mapValues { .double($0) }
+
+            return PersistedTrial(
+                number: payload.number,
+                state: state,
+                value: payload.values.first,
+                values: payload.values,
+                params: decodedParams,
+                internalParams: payload.params,
+                userAttrs: payload.user_attrs,
+                constraints: payload.constraints,
+                intermediateValues: payload.intermediate_values,
+                datetimeStart: dtStart,
+                datetimeComplete: dtComplete
+            )
+        }
     }
 
     /// Fetches trials filtered by variadic `TrialState`s.
@@ -595,7 +621,7 @@ public final class Study: @unchecked Sendable {
         let param_values: [String: ParameterValue]?
         let user_attrs: [String: String]
         let constraints: [String: Double]
-        let intermediate_values: [String: Double]
+        let intermediate_values: [Int: Double]
         let datetime_start: String?
         let datetime_complete: String?
     }
@@ -621,10 +647,6 @@ public final class Study: @unchecked Sendable {
             )
         }
 
-        let intermediateValues = Dictionary(
-            uniqueKeysWithValues: payload.intermediate_values.compactMap { k, v in
-                Int(k).map { ($0, v) }
-            })
         let state = TrialState(rawValue: payload.state) ?? .fail
         let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
         let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
@@ -640,7 +662,7 @@ public final class Study: @unchecked Sendable {
             internalParams: payload.params,
             userAttrs: payload.user_attrs,
             constraints: payload.constraints,
-            intermediateValues: intermediateValues,
+            intermediateValues: payload.intermediate_values,
             datetimeStart: dtStart,
             datetimeComplete: dtComplete
         )

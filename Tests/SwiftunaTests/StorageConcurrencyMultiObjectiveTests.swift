@@ -232,4 +232,46 @@ struct StorageConcurrencyMultiObjectiveTests {
             #expect(pt.params["x"] != nil)
         }
     }
+
+    // MARK: - Concurrent Error Handling & Thread Isolation Tests
+
+    @Test("Concurrent tasks taking errors isolate error slots with zero cross-talk")
+    func testConcurrentErrorTakeAndIsolation() async throws {
+        let taskCount = 16
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<taskCount {
+                group.addTask {
+                    let study = try! Swiftuna.createStudy(direction: .minimize)
+                    var trial = try! study.ask()
+
+                    // Trigger invalid log scale range in Rust: low <= 0 with log scale
+                    do {
+                        _ = try trial.suggest("x_\(i)", in: 0.0...Double(i + 1), log: true)
+                        Issue.record("Expected invalidRange error")
+                    } catch let error as SwiftunaError {
+                        switch error {
+                        case .invalidRange(let msg):
+                            #expect(msg.contains("log scale requires low"))
+                        default:
+                            Issue.record("Expected invalidRange error, got \(error)")
+                        }
+                    } catch {
+                        Issue.record("Expected SwiftunaError, got \(error)")
+                    }
+
+                    // Verify that subsequent valid operation on this task succeeds cleanly
+                    do {
+                        let validVal = try trial.suggest("valid_param", in: 0.0...10.0)
+                        #expect(validVal >= 0.0 && validVal <= 10.0)
+                        try study.tell(consuming: trial, value: validVal)
+                        let best = try study.bestValue
+                        #expect(best == validVal)
+                    } catch {
+                        Issue.record("Subsequent operation failed: \(error)")
+                    }
+                }
+            }
+        }
+    }
 }

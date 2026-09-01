@@ -18,6 +18,11 @@ build-release: build-ffi-release
 test:
     swift test
 
+test-ffi:
+    cargo test --manifest-path crates/rustuna-ffi/Cargo.toml
+
+test-all: test-ffi test
+
 test-prop:
     swift test --filter PropertyTests
 
@@ -37,6 +42,9 @@ package-binaries-check:
 
 bench: build-ffi-release
     swift run -c release SwiftunaBench
+
+microbench: build-ffi-release
+    swift run -c release --package-path tmp_microbench
 
 migrate-check:
     swift run SwiftunaMigrator

@@ -18,6 +18,7 @@ typedef struct RustunaSampler RustunaSampler;
 // Global error & memory utilities
 int32_t rustuna_last_error_code(void);
 const char* rustuna_last_error_message(void);
+int32_t rustuna_take_last_error(int32_t* out_code, char** out_msg);
 void rustuna_string_free(char* s);
 
 // Sampler APIs
@@ -54,6 +55,7 @@ int32_t rustuna_study_get_best_trials(RustunaStudy* study, RustunaPersistedTrial
 int32_t rustuna_study_get_trials(RustunaStudy* study, RustunaPersistedTrial*** out_trials, size_t* out_len);
 int32_t rustuna_study_get_trials_filtered(RustunaStudy* study, uint32_t states_mask,
                                           RustunaPersistedTrial*** out_trials, size_t* out_len);
+int32_t rustuna_study_get_trials_json(RustunaStudy* study, uint32_t states_mask, char** out_json, size_t* out_len);
 void rustuna_trials_buffer_free(RustunaPersistedTrial** trials, size_t len);
 
 // Storage Lifecycle & Study Management APIs

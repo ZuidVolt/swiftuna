@@ -87,6 +87,8 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     public static func from(code: Int32, message: String) -> Self {
         switch code {
         case -1: return .invalidArgument(message)
+        case -3: return .emptyChoices(message)
+        case -4: return .invalidRange(message)
         case -99: return .panic(message)
         case 1: return .objectiveError(message)
         case 2: return .samplerError(message)
@@ -113,10 +115,19 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     }
 
     internal static func fromLastError(fallbackCode: Int32 = -2, context: String) -> Self {
-        let code = rustuna_last_error_code()
-        let effectiveCode = code != 0 ? code : fallbackCode
-        let msg = rustuna_last_error_message().map { String(cString: $0) } ?? context
-        return from(code: effectiveCode, message: msg)
+        var code: Int32 = 0
+        var cMsg: UnsafeMutablePointer<CChar>?
+        let hasError = rustuna_take_last_error(&code, &cMsg)
+        if hasError != 0 {
+            let msg = cMsg.map { String(cString: $0) } ?? context
+            if let cMsg {
+                rustuna_string_free(cMsg)
+            }
+            let effectiveCode = code != 0 ? code : fallbackCode
+            return from(code: effectiveCode, message: msg)
+        } else {
+            return from(code: fallbackCode, message: context)
+        }
     }
 
     public var description: String {
