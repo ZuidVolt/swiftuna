@@ -119,7 +119,7 @@ public func createStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to create study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: directions, pruner: pruner)
+    return Study(raw: studyPtr, name: name, directions: directions, pruner: pruner, storage: storage)
 }
 
 /// Creates a multi-objective study with default NSGAIISampler (if directions.count > 1) or TPESampler.
@@ -198,7 +198,7 @@ public func loadStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to load study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: [.minimize], pruner: pruner)
+    return Study(raw: studyPtr, name: name, directions: [.minimize], pruner: pruner, storage: storage)
 }
 
 /// Loads an existing study from persistent storage with default TPESampler and optional pruner.

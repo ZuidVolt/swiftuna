@@ -54,6 +54,7 @@ public final class Study: @unchecked Sendable {
     public let name: String
     public let directions: [Direction]
     public let pruner: any Pruner
+    public let storage: StorageBackend
 
     public var direction: Direction {
         directions.first ?? .minimize
@@ -63,21 +64,32 @@ public final class Study: @unchecked Sendable {
         raw: OpaquePointer?,
         name: String,
         directions: [Direction],
-        pruner: any Pruner = NopPruner()
+        pruner: any Pruner = NopPruner(),
+        storage: StorageBackend = .inMemory
     ) {
         self.raw = raw
         self.name = name
         self.directions = directions
         self.pruner = pruner
+        self.storage = storage
     }
 
     internal convenience init(
         raw: OpaquePointer?,
         name: String,
         direction: Direction,
-        pruner: any Pruner = NopPruner()
+        pruner: any Pruner = NopPruner(),
+        storage: StorageBackend = .inMemory
     ) {
-        self.init(raw: raw, name: name, directions: [direction], pruner: pruner)
+        self.init(raw: raw, name: name, directions: [direction], pruner: pruner, storage: storage)
+    }
+
+    /// Synchronizes and formats the underlying SQLite database for full compatibility
+    /// with `optuna-dashboard` and Python Optuna.
+    public func syncWithOptunaDashboard() {
+        if case .sqlite(let path) = storage {
+            StorageBackend.syncWithOptunaDashboard(at: path)
+        }
     }
 
     deinit {
@@ -213,6 +225,9 @@ public final class Study: @unchecked Sendable {
         timeout: Duration? = nil,
         objective: (inout Trial) throws(SwiftunaError) -> [Double]
     ) throws(SwiftunaError) {
+        defer {
+            syncWithOptunaDashboard()
+        }
         let budget = try OptimizationBudget(nTrials: nTrials, timeout: timeout)
         let clock = ContinuousClock()
         var iteration = 0
@@ -549,7 +564,8 @@ public final class Study: @unchecked Sendable {
         return Study(
             raw: outStudy,
             name: targetName,
-            directions: directions
+            directions: directions,
+            storage: destination
         )
     }
 
