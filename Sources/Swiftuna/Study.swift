@@ -93,6 +93,7 @@ public final class Study: @unchecked Sendable {
     }
 
     deinit {
+        syncWithOptunaDashboard()
         if let raw {
             rustuna_study_free(raw)
         }
@@ -526,30 +527,7 @@ public final class Study: @unchecked Sendable {
         defer { rustuna_string_free(cJson) }
 
         let data = Data(bytesNoCopy: cJson, count: jsonLen, deallocator: .none)
-        guard let payloads = try? Self.trialDecoder.decode([PersistedTrialJSONPayload].self, from: data) else {
-            return []
-        }
-
-        return payloads.map { payload in
-            let state = TrialState(rawValue: payload.state) ?? .fail
-            let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
-            let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
-            let decodedParams = payload.param_values ?? payload.params.mapValues { .double($0) }
-
-            return PersistedTrial(
-                number: payload.number,
-                state: state,
-                value: payload.values.first,
-                values: payload.values,
-                params: decodedParams,
-                internalParams: payload.params,
-                userAttrs: payload.user_attrs,
-                constraints: payload.constraints,
-                intermediateValues: payload.intermediate_values,
-                datetimeStart: dtStart,
-                datetimeComplete: dtComplete
-            )
-        }
+        return (try? Self.trialDecoder.decode([PersistedTrial].self, from: data)) ?? []
     }
 
     /// Fetches trials filtered by variadic `TrialState`s.
@@ -613,19 +591,6 @@ public final class Study: @unchecked Sendable {
         return results
     }
 
-    private struct PersistedTrialJSONPayload: Decodable {
-        let number: Int
-        let state: Int32
-        let values: [Double]
-        let params: [String: Double]
-        let param_values: [String: ParameterValue]?
-        let user_attrs: [String: String]
-        let constraints: [String: Double]
-        let intermediate_values: [Int: Double]
-        let datetime_start: String?
-        let datetime_complete: String?
-    }
-
     private static let trialDecoder = JSONDecoder()
 
     private func parsePersistedTrial(_ trialPtr: OpaquePointer) -> PersistedTrial {
@@ -640,44 +605,10 @@ public final class Study: @unchecked Sendable {
 
         let len = strlen(cJson)
         let data = Data(bytesNoCopy: cJson, count: len, deallocator: .none)
-        guard let payload = try? Self.trialDecoder.decode(PersistedTrialJSONPayload.self, from: data) else {
-            return PersistedTrial(
-                number: 0, state: .fail, value: nil, values: [],
-                params: [:], internalParams: [:], userAttrs: [:]
-            )
-        }
-
-        let state = TrialState(rawValue: payload.state) ?? .fail
-        let dtStart = payload.datetime_start.flatMap { parseOptunaDate($0) }
-        let dtComplete = payload.datetime_complete.flatMap { parseOptunaDate($0) }
-
-        let decodedParams = payload.param_values ?? payload.params.mapValues { .double($0) }
-
-        return PersistedTrial(
-            number: payload.number,
-            state: state,
-            value: payload.values.first,
-            values: payload.values,
-            params: decodedParams,
-            internalParams: payload.params,
-            userAttrs: payload.user_attrs,
-            constraints: payload.constraints,
-            intermediateValues: payload.intermediate_values,
-            datetimeStart: dtStart,
-            datetimeComplete: dtComplete
+        return (try? Self.trialDecoder.decode(PersistedTrial.self, from: data)) ?? PersistedTrial(
+            number: 0, state: .fail, value: nil, values: [],
+            params: [:], internalParams: [:], userAttrs: [:]
         )
-    }
-
-    private func parseOptunaDate(_ str: String) -> Date? {
-        if let d = try? Date(str, strategy: .iso8601) {
-            return d
-        }
-        // SQLite format "yyyy-MM-dd HH:mm:ss.SSSSSS" -> normalize to ISO8601 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ"
-        var isoStr = str.replacingOccurrences(of: " ", with: "T")
-        if !isoStr.hasSuffix("Z"), !isoStr.contains("+") {
-            isoStr.append("Z")
-        }
-        return try? Date(isoStr, strategy: .iso8601)
     }
 
     // MARK: - Study User Attributes & Analytics

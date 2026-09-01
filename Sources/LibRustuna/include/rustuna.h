@@ -15,10 +15,51 @@ typedef struct RustunaTrial RustunaTrial;
 typedef struct RustunaPersistedTrial RustunaPersistedTrial;
 typedef struct RustunaSampler RustunaSampler;
 
+/**
+ * @brief Canonical error codes returned by Rustuna FFI functions.
+ */
+typedef enum RustunaErrorCode {
+    RUSTUNA_SUCCESS = 0,
+    RUSTUNA_ERR_INVALID_ARGUMENT = -1,
+    RUSTUNA_ERR_EMPTY_CHOICES = -3,
+    RUSTUNA_ERR_INVALID_RANGE = -4,
+    RUSTUNA_ERR_PANIC = -99,
+    RUSTUNA_ERR_OBJECTIVE = 1,
+    RUSTUNA_ERR_SAMPLER = 2,
+    RUSTUNA_ERR_STORAGE = 3,
+    RUSTUNA_ERR_DUPLICATED_STUDY = 4,
+    RUSTUNA_ERR_STUDY_NOT_FOUND = 5,
+    RUSTUNA_ERR_TRIAL_NOT_FOUND = 6,
+    RUSTUNA_ERR_TRIAL_DISCARDED = 7,
+    RUSTUNA_ERR_ATTR_NOT_FOUND = 8,
+    RUSTUNA_ERR_TRIAL_QUEUE_EMPTY = 9,
+    RUSTUNA_ERR_ATTR_OVERWRITE_NOT_ALLOWED = 10,
+    RUSTUNA_ERR_INVALID_OBJECTIVE_VALUES = 11,
+    RUSTUNA_ERR_TRIAL_ALREADY_FINISHED = 12,
+    RUSTUNA_ERR_UNSUPPORTED_SEARCH_SPACE = 13,
+    RUSTUNA_ERR_UNSUPPORTED_MULTI_OBJECTIVE = 14,
+    RUSTUNA_ERR_NO_COMPLETED_TRIAL = 15,
+    RUSTUNA_ERR_INCOMPATIBLE_DISTRIBUTION = 16,
+    RUSTUNA_ERR_INVALID_FIXED_PARAM = 17,
+    RUSTUNA_ERR_MISSING_DEPENDENCY = 18,
+    RUSTUNA_ERR_UNEXPECTED = 19,
+    RUSTUNA_ERR_IMPORTANCE_EVALUATOR = 20,
+    RUSTUNA_ERR_SEARCH_SPACE_EXHAUSTED = 21
+} RustunaErrorCode;
+
 // Global error & memory utilities
-int32_t rustuna_last_error_code(void);
-const char* rustuna_last_error_message(void);
+
+/**
+ * @brief Atomically consumes and resets the last error recorded on the calling thread.
+ * @param out_code Pointer to receive the integer error code.
+ * @param out_msg Pointer to receive the newly-allocated error message string (must be freed via rustuna_string_free).
+ * @return 1 if an error was present and taken, 0 if no error was recorded.
+ */
 int32_t rustuna_take_last_error(int32_t* out_code, char** out_msg);
+
+/**
+ * @brief Frees a C string allocated by Rustuna FFI.
+ */
 void rustuna_string_free(char* s);
 
 // Sampler APIs
@@ -66,6 +107,13 @@ int32_t rustuna_storage_copy_study(int32_t from_storage_type, const char* from_s
                                    const char* to_study_name);
 int32_t rustuna_storage_get_studies_json(int32_t storage_type, const char* storage_path, char** out_json);
 int32_t rustuna_storage_delete_study(int32_t storage_type, const char* storage_path, const char* study_name);
+
+/**
+ * @brief Formats and synchronizes internal SQLite tables to ensure full binary compatibility with Optuna dashboard.
+ * @param path File system path to the SQLite database.
+ * @return 0 on success, or non-zero error code on failure.
+ */
+int32_t rustuna_storage_sync_optuna_dashboard(const char* path);
 
 // Trial APIs (Active mutable trial)
 uint32_t rustuna_trial_get_number(RustunaTrial* trial);

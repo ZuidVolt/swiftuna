@@ -85,32 +85,35 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     case searchSpaceExhausted(String)
 
     public static func from(code: Int32, message: String) -> Self {
-        switch code {
-        case -1: return .invalidArgument(message)
-        case -3: return .emptyChoices(message)
-        case -4: return .invalidRange(message)
-        case -99: return .panic(message)
-        case 1: return .objectiveError(message)
-        case 2: return .samplerError(message)
-        case 3: return .storageError(message)
-        case 4: return .duplicatedStudy(message)
-        case 5: return .studyNotFound(message)
-        case 6: return .trialNotFound(message)
-        case 7: return .trialDiscarded
-        case 8: return .attrNotFound(message)
-        case 9: return .trialQueueEmpty
-        case 10: return .attrOverwriteNotAllowed(message)
-        case 11: return .invalidObjectiveValues(message)
-        case 12: return .trialAlreadyFinished(message)
-        case 13: return .unsupportedSearchSpace(message)
-        case 14: return .unsupportedMultiObjective
-        case 15: return .noCompletedTrial
-        case 16: return .incompatibleDistribution(message)
-        case 17: return .invalidFixedParam(message)
-        case 18: return .missingDependency(message)
-        case 19: return .unexpected(message)
-        case 21: return .searchSpaceExhausted(message)
-        default: return .unexpected("Code \(code): \(message)")
+        let errCode = RustunaErrorCode(rawValue: code)
+        switch errCode {
+        case RUSTUNA_SUCCESS: return .unexpected("Success code passed to error handler: \(message)")
+        case RUSTUNA_ERR_INVALID_ARGUMENT: return .invalidArgument(message)
+        case RUSTUNA_ERR_EMPTY_CHOICES: return .emptyChoices(message)
+        case RUSTUNA_ERR_INVALID_RANGE: return .invalidRange(message)
+        case RUSTUNA_ERR_PANIC: return .panic(message)
+        case RUSTUNA_ERR_OBJECTIVE: return .objectiveError(message)
+        case RUSTUNA_ERR_SAMPLER: return .samplerError(message)
+        case RUSTUNA_ERR_STORAGE: return .storageError(message)
+        case RUSTUNA_ERR_DUPLICATED_STUDY: return .duplicatedStudy(message)
+        case RUSTUNA_ERR_STUDY_NOT_FOUND: return .studyNotFound(message)
+        case RUSTUNA_ERR_TRIAL_NOT_FOUND: return .trialNotFound(message)
+        case RUSTUNA_ERR_TRIAL_DISCARDED: return .trialDiscarded
+        case RUSTUNA_ERR_ATTR_NOT_FOUND: return .attrNotFound(message)
+        case RUSTUNA_ERR_TRIAL_QUEUE_EMPTY: return .trialQueueEmpty
+        case RUSTUNA_ERR_ATTR_OVERWRITE_NOT_ALLOWED: return .attrOverwriteNotAllowed(message)
+        case RUSTUNA_ERR_INVALID_OBJECTIVE_VALUES: return .invalidObjectiveValues(message)
+        case RUSTUNA_ERR_TRIAL_ALREADY_FINISHED: return .trialAlreadyFinished(message)
+        case RUSTUNA_ERR_UNSUPPORTED_SEARCH_SPACE: return .unsupportedSearchSpace(message)
+        case RUSTUNA_ERR_UNSUPPORTED_MULTI_OBJECTIVE: return .unsupportedMultiObjective
+        case RUSTUNA_ERR_NO_COMPLETED_TRIAL: return .noCompletedTrial
+        case RUSTUNA_ERR_INCOMPATIBLE_DISTRIBUTION: return .incompatibleDistribution(message)
+        case RUSTUNA_ERR_INVALID_FIXED_PARAM: return .invalidFixedParam(message)
+        case RUSTUNA_ERR_MISSING_DEPENDENCY: return .missingDependency(message)
+        case RUSTUNA_ERR_UNEXPECTED: return .unexpected(message)
+        case RUSTUNA_ERR_IMPORTANCE_EVALUATOR: return .samplerError(message)
+        case RUSTUNA_ERR_SEARCH_SPACE_EXHAUSTED: return .searchSpaceExhausted(message)
+        default: return .unexpected("Unknown error code \(code): \(message)")
         }
     }
 

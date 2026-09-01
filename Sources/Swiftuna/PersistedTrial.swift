@@ -136,6 +136,65 @@ public struct PersistedTrial: Sendable, Codable {
         )
     }
 
+    // MARK: - Codable Implementation
+
+    private enum CodingKeys: String, CodingKey {
+        case number
+        case state
+        case values
+        case params
+        case paramValues = "param_values"
+        case userAttrs = "user_attrs"
+        case constraints
+        case intermediateValues = "intermediate_values"
+        case datetimeStart = "datetime_start"
+        case datetimeComplete = "datetime_complete"
+    }
+
+    /// Decodes a persisted trial directly from Optuna or Rustuna serialized JSON representation.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.number = try container.decode(Int.self, forKey: .number)
+
+        let stateInt = try container.decode(Int32.self, forKey: .state)
+        self.state = TrialState(rawValue: stateInt) ?? .fail
+
+        let values = try container.decodeIfPresent([Double].self, forKey: .values) ?? []
+        self.values = values
+        self.value = values.first
+
+        let rawParams = try container.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
+        let paramValues = try container.decodeIfPresent([String: ParameterValue].self, forKey: .paramValues)
+        self.params = paramValues ?? rawParams.mapValues { .double($0) }
+        self._internalParams = rawParams.isEmpty ? nil : rawParams
+
+        self.userAttrs = try container.decodeIfPresent([String: String].self, forKey: .userAttrs) ?? [:]
+        self.constraints = try container.decodeIfPresent([String: Double].self, forKey: .constraints) ?? [:]
+        self.intermediateValues = try container.decodeIfPresent([Int: Double].self, forKey: .intermediateValues) ?? [:]
+
+        let dtStartStr = try container.decodeIfPresent(String.self, forKey: .datetimeStart)
+        self.datetimeStart = dtStartStr.flatMap { parseOptunaDate($0) }
+
+        let dtCompleteStr = try container.decodeIfPresent(String.self, forKey: .datetimeComplete)
+        self.datetimeComplete = dtCompleteStr.flatMap { parseOptunaDate($0) }
+    }
+
+    /// Encodes this persisted trial record into standard Optuna JSON representation.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(number, forKey: .number)
+        try container.encode(state.rawValue, forKey: .state)
+        try container.encode(values, forKey: .values)
+        try container.encode(internalParams, forKey: .params)
+        try container.encode(params, forKey: .paramValues)
+        try container.encode(userAttrs, forKey: .userAttrs)
+        try container.encode(constraints, forKey: .constraints)
+        try container.encode(intermediateValues, forKey: .intermediateValues)
+        let isoFormatter = ISO8601DateFormatter()
+        try container.encodeIfPresent(datetimeStart.map { isoFormatter.string(from: $0) }, forKey: .datetimeStart)
+        try container.encodeIfPresent(datetimeComplete.map { isoFormatter.string(from: $0) }, forKey: .datetimeComplete)
+    }
+
     // MARK: - Subscripts
 
     /// Accesses a strongly-typed user attribute value using an ``AttributeKey``.
@@ -379,4 +438,16 @@ extension Sequence where Element == PersistedTrial {
         }
         return intervals
     }
+}
+
+internal func parseOptunaDate(_ str: String) -> Date? {
+    if let d = try? Date(str, strategy: .iso8601) {
+        return d
+    }
+    // SQLite format "yyyy-MM-dd HH:mm:ss.SSSSSS" -> normalize to ISO8601 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ"
+    var isoStr = str.replacingOccurrences(of: " ", with: "T")
+    if !isoStr.hasSuffix("Z"), !isoStr.contains("+") {
+        isoStr.append("Z")
+    }
+    return try? Date(isoStr, strategy: .iso8601)
 }

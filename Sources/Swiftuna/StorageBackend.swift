@@ -1,6 +1,5 @@
 public import Foundation
 import LibRustuna
-internal import SQLite3
 
 /// Defines the persistence storage engine for Swiftuna studies.
 ///
@@ -156,36 +155,8 @@ extension StorageBackend {
     ///
     /// - Parameter path: The file system path to the SQLite database.
     public static func syncWithOptunaDashboard(at path: String) {
-        var db: OpaquePointer?
-        guard sqlite3_open(path, &db) == SQLITE_OK, let db else {
-            return
+        _ = path.withCString { cPath in
+            rustuna_storage_sync_optuna_dashboard(cPath)
         }
-        defer { sqlite3_close(db) }
-
-        let sql = """
-        UPDATE study_system_attributes
-        SET value_json = '"' || SUBSTR(value_json, 3) || '"'
-        WHERE value_json LIKE 's:%';
-
-        UPDATE study_system_attributes
-        SET value_json = SUBSTR(value_json, 3)
-        WHERE value_json LIKE 'i:%' OR value_json LIKE 'f:%';
-
-        UPDATE study_system_attributes
-        SET value_json = 'null'
-        WHERE value_json = 'None';
-
-        UPDATE trial_user_attributes
-        SET value_json = json_quote(value_json)
-        WHERE json_valid(value_json) = 0;
-
-        INSERT INTO trial_system_attributes (trial_id, key, value_json)
-        SELECT trial_id, 'constraints', json_group_array(CAST(value_json AS REAL))
-        FROM trial_system_attributes
-        WHERE key LIKE 'constraints:%'
-        GROUP BY trial_id
-        ON CONFLICT(trial_id, key) DO UPDATE SET value_json = excluded.value_json;
-        """
-        sqlite3_exec(db, sql, nil, nil, nil)
     }
 }

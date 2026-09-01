@@ -95,10 +95,7 @@ pub extern "C" fn rustuna_last_error_message() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rustuna_take_last_error(
-    out_code: *mut i32,
-    out_msg: *mut *mut c_char,
-) -> i32 {
+pub extern "C" fn rustuna_take_last_error(out_code: *mut i32, out_msg: *mut *mut c_char) -> i32 {
     LAST_ERROR.with(|cell| {
         if let Some((code, cs)) = cell.borrow_mut().take() {
             unsafe {
@@ -1472,16 +1469,13 @@ fn extract_persisted_trial_payload<'a>(t: &'a RustunaPersistedTrial) -> Persiste
                                 }
                                 rustuna_core::attr::CategoryLabel::Float(f) => {
                                     if let Some(num) = serde_json::Number::from_f64(*f) {
-                                        param_values.insert(
-                                            name.as_str(),
-                                            serde_json::Value::Number(num),
-                                        );
+                                        param_values
+                                            .insert(name.as_str(), serde_json::Value::Number(num));
                                         continue;
                                     }
                                 }
                                 rustuna_core::attr::CategoryLabel::Bool(b) => {
-                                    param_values
-                                        .insert(name.as_str(), serde_json::Value::Bool(*b));
+                                    param_values.insert(name.as_str(), serde_json::Value::Bool(*b));
                                     continue;
                                 }
                                 rustuna_core::attr::CategoryLabel::None => {
@@ -1641,7 +1635,10 @@ pub extern "C" fn rustuna_study_get_trials_json(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_study_get_trials_json: {e:?}"));
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_study_get_trials_json: {e:?}"),
+            );
             -99
         }
     }
@@ -2039,6 +2036,96 @@ pub extern "C" fn rustuna_storage_delete_study(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_storage_delete_study: {e:?}"));
+            -99
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn sqlite3_open(filename: *const c_char, ppDb: *mut *mut std::ffi::c_void) -> i32;
+    fn sqlite3_close(db: *mut std::ffi::c_void) -> i32;
+    fn sqlite3_exec(
+        db: *mut std::ffi::c_void,
+        sql: *const c_char,
+        callback: Option<unsafe extern "C" fn() -> i32>,
+        arg: *mut std::ffi::c_void,
+        errmsg: *mut *mut c_char,
+    ) -> i32;
+    fn sqlite3_free(p: *mut std::ffi::c_void);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_storage_sync_optuna_dashboard(path: *const c_char) -> i32 {
+    if path.is_null() {
+        set_last_error(-1, "path pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let mut db: *mut std::ffi::c_void = std::ptr::null_mut();
+        let rc = unsafe { sqlite3_open(path, &mut db) };
+        if rc != 0 || db.is_null() {
+            set_last_error(3, format!("Failed to open sqlite database: rc={rc}"));
+            return 3;
+        }
+        let sql = b"\
+        UPDATE study_system_attributes\n\
+        SET value_json = '\"' || SUBSTR(value_json, 3) || '\"'\n\
+        WHERE value_json LIKE 's:%';\n\
+        \n\
+        UPDATE study_system_attributes\n\
+        SET value_json = SUBSTR(value_json, 3)\n\
+        WHERE value_json LIKE 'i:%' OR value_json LIKE 'f:%';\n\
+        \n\
+        UPDATE study_system_attributes\n\
+        SET value_json = 'null'\n\
+        WHERE value_json = 'None';\n\
+        \n\
+        UPDATE trial_user_attributes\n\
+        SET value_json = json_quote(value_json)\n\
+        WHERE json_valid(value_json) = 0;\n\
+        \n\
+        INSERT INTO trial_system_attributes (trial_id, key, value_json)\n\
+        SELECT trial_id, 'constraints', json_group_array(CAST(value_json AS REAL))\n\
+        FROM trial_system_attributes\n\
+        WHERE key LIKE 'constraints:%'\n\
+        GROUP BY trial_id\n\
+        ON CONFLICT(trial_id, key) DO UPDATE SET value_json = excluded.value_json;\0";
+
+        let mut err_msg: *mut c_char = std::ptr::null_mut();
+        let exec_rc = unsafe {
+            sqlite3_exec(
+                db,
+                sql.as_ptr() as *const c_char,
+                None,
+                std::ptr::null_mut(),
+                &mut err_msg,
+            )
+        };
+        unsafe {
+            sqlite3_close(db);
+        }
+        if exec_rc != 0 {
+            let msg = if !err_msg.is_null() {
+                let s = unsafe { CStr::from_ptr(err_msg).to_string_lossy().into_owned() };
+                unsafe {
+                    sqlite3_free(err_msg as *mut std::ffi::c_void);
+                }
+                s
+            } else {
+                format!("rc={exec_rc}")
+            };
+            set_last_error(3, format!("Failed to execute sync SQL batch: {msg}"));
+            return 3;
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(
+                -99,
+                format!("Panic in rustuna_storage_sync_optuna_dashboard: {e:?}"),
+            );
             -99
         }
     }
