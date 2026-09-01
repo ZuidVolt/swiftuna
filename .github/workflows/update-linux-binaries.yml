@@ -28,7 +28,7 @@ jobs:
 
       - name: shallow clone ref/rustuna
         env:
-          RUSTUNA_COMMIT: 8acb2dd1c9efefe23b7ea369614e081871aaa4f9
+          RUSTUNA_COMMIT: 9b36174af5b40a77db46e65b24e0fe5d0f03db4a
         run: |
           rm -rf ref/rustuna
           git init ref/rustuna

@@ -37,7 +37,37 @@ func findGit() -> String {
     return res.exitCode == 0 ? res.stdout : "/usr/bin/git"
 }
 
-let workflowPath = ".github/workflows/update-linux-binaries.yml"
+func findProjectRoot() -> String {
+    // 1. Check compile-time file path hierarchy
+    var candidate = URL(fileURLWithPath: #filePath)
+    while candidate.pathComponents.count > 1 {
+        let pkgPath = candidate.appendingPathComponent("Package.swift").path
+        let refPath = candidate.appendingPathComponent("ref/rustuna").path
+        if FileManager.default.fileExists(atPath: pkgPath) && FileManager.default.fileExists(atPath: refPath) {
+            return candidate.path
+        }
+        candidate.deleteLastPathComponent()
+    }
+
+    // 2. Fallback: Traverse upwards from current working directory
+    var dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    while dir.pathComponents.count > 1 {
+        let pkgPath = dir.appendingPathComponent("Package.swift").path
+        let refPath = dir.appendingPathComponent("ref/rustuna").path
+        if FileManager.default.fileExists(atPath: pkgPath) && FileManager.default.fileExists(atPath: refPath) {
+            return dir.path
+        }
+        dir.deleteLastPathComponent()
+    }
+
+    return FileManager.default.currentDirectoryPath
+}
+
+let projectRoot = findProjectRoot()
+let workflowPath = URL(fileURLWithPath: projectRoot).appendingPathComponent(
+    ".github/workflows/update-linux-binaries.yml"
+).path
+let rustunaDir = URL(fileURLWithPath: projectRoot).appendingPathComponent("ref/rustuna").path
 
 func readCIPinnedCommit() -> String? {
     guard let content = try? String(contentsOfFile: workflowPath, encoding: .utf8) else {
@@ -57,7 +87,9 @@ func readCIPinnedCommit() -> String? {
 
 func updateCIPinnedCommit(_ newCommit: String) throws {
     guard let content = try? String(contentsOfFile: workflowPath, encoding: .utf8) else {
-        throw NSError(domain: "SwiftunaMigrator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to read \(workflowPath)"])
+        throw NSError(
+            domain: "SwiftunaMigrator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to read \(workflowPath)"]
+        )
     }
 
     var lines = content.components(separatedBy: "\n")
@@ -74,7 +106,9 @@ func updateCIPinnedCommit(_ newCommit: String) throws {
     }
 
     if !updated {
-        throw NSError(domain: "SwiftunaMigrator", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not find 'RUSTUNA_COMMIT:' in \(workflowPath)"])
+        throw NSError(
+            domain: "SwiftunaMigrator", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Could not find 'RUSTUNA_COMMIT:' in \(workflowPath)"])
     }
 
     let newContent = lines.joined(separator: "\n")
@@ -85,7 +119,6 @@ func updateCIPinnedCommit(_ newCommit: String) throws {
 struct SwiftunaMigratorApp {
     static func main() {
         let git = findGit()
-        let rustunaDir = "ref/rustuna"
         let args = CommandLine.arguments
 
         print("=========================================================")
@@ -104,7 +137,9 @@ struct SwiftunaMigratorApp {
         if let ciPinnedCommit {
             print("☁️  CI workflow pinned commit: \(ciPinnedCommit)")
             if ciPinnedCommit != currentFullHash {
-                print("⚠️  Warning: Local ref/rustuna (\(currentFullHash.prefix(8))) does not match CI workflow pin (\(ciPinnedCommit.prefix(8)))")
+                print(
+                    "⚠️  Warning: Local ref/rustuna (\(currentFullHash.prefix(8))) does not match CI workflow pin (\(ciPinnedCommit.prefix(8)))"
+                )
             } else {
                 print("✅ Local ref/rustuna and CI workflow are in sync.")
             }
@@ -123,7 +158,8 @@ struct SwiftunaMigratorApp {
             }
 
             let newHash = runProcess(executable: git, arguments: ["-C", rustunaDir, "rev-parse", "HEAD"]).stdout
-            let newLog = runProcess(executable: git, arguments: ["-C", rustunaDir, "log", "-n", "1", "--oneline"]).stdout
+            let newLog = runProcess(executable: git, arguments: ["-C", rustunaDir, "log", "-n", "1", "--oneline"])
+                .stdout
 
             do {
                 try updateCIPinnedCommit(newHash)
@@ -169,8 +205,10 @@ struct SwiftunaMigratorApp {
             print("⚠️  Warning: Unable to fetch origin (offline or no remote access): \(fetchRes.stderr)")
         }
 
-        let diffStat = runProcess(executable: git, arguments: ["-C", rustunaDir, "diff", "HEAD..origin/main", "--stat"])
-        let diffCommits = runProcess(executable: git, arguments: ["-C", rustunaDir, "log", "HEAD..origin/main", "--oneline"])
+        let diffStat = runProcess(
+            executable: git, arguments: ["-C", rustunaDir, "di`ff", "HEAD..origin/main", "--stat"])
+        let diffCommits = runProcess(
+            executable: git, arguments: ["-C", rustunaDir, "log", "HEAD..origin/main", "--oneline"])
 
         if diffCommits.stdout.isEmpty {
             print("✅ Swiftuna is completely up-to-date with upstream 'origin/main'.")
