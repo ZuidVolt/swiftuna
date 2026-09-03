@@ -36,7 +36,7 @@ public func optimize<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
     nTrials: Int,
     workers: Int = 4,
-    objective: @Sendable @escaping (DistributedTrialContext<ActorSystem>) async throws -> Double
+    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> Double
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     try await optimize(coordinator: coordinator, nTrials: nTrials, workers: workers) { ctx in
         [try await objective(ctx)]
@@ -51,7 +51,7 @@ public func optimize<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
     nTrials: Int,
     workers: Int = 4,
-    objective: @Sendable @escaping (DistributedTrialContext<ActorSystem>) async throws -> [Double]
+    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> [Double]
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     precondition(nTrials >= 0, "nTrials must be non-negative")
     precondition(workers >= 1, "workers must be at least 1")
@@ -91,7 +91,7 @@ public func optimize<ActorSystem>(
 public func runWorker<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
     nTrials: Int? = nil,
-    objective: @Sendable @escaping (DistributedTrialContext<ActorSystem>) async throws -> Double
+    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> Double
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     try await runWorker(coordinator: coordinator, nTrials: nTrials) { ctx in
         [try await objective(ctx)]
@@ -105,7 +105,7 @@ public func runWorker<ActorSystem>(
 public func runWorker<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
     nTrials: Int? = nil,
-    objective: @Sendable @escaping (DistributedTrialContext<ActorSystem>) async throws -> [Double]
+    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> [Double]
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     if let nTrials {
         precondition(nTrials >= 0, "nTrials must be non-negative")
@@ -128,7 +128,7 @@ public func runWorker<ActorSystem>(
 /// Checks out, evaluates, and records a single trial.
 private func runOneTrial<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
-    objective: @Sendable @escaping (DistributedTrialContext<ActorSystem>) async throws -> [Double]
+    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> [Double]
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     let ctx = try await DistributedTrialContext.checkout(from: coordinator)
     do {

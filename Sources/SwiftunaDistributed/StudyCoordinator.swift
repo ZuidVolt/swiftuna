@@ -172,7 +172,7 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
             }
         }
 
-        guard let handle = active.rawHandle else {
+        guard let handle = active.handle.raw else {
             throw SwiftunaDistributedError.studyError("Trial #\(result.trialNumber) handle already freed")
         }
 

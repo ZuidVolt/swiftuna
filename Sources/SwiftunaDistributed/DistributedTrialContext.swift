@@ -23,7 +23,7 @@ public import Swiftuna
 /// local calls — only the underlying `ask`/`report`/`tell` cross the actor
 /// boundary — so the context itself never needs to satisfy the actor system's
 /// `Codable` requirement.
-public struct DistributedTrialContext<ActorSystem>: Sendable
+public struct DistributedTrialContext<ActorSystem>: ~Copyable, Sendable
 where ActorSystem: DistributedActorSystem<any Codable> {
     /// The checked-out trial.
     public let trial: DistributedTrial
