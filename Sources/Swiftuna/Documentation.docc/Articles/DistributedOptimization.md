@@ -177,6 +177,8 @@ try await runWorker(coordinator: coordinator) { ctx in
 
 `runWorker` without a trial count loops until the search space is exhausted, which is the normal mode for long-lived remote workers. It sleeps briefly through full-coordinator spells and records failures like the driver does. WebSocketActors adds multi-client connections, automatic reconnection, and server push on top; the coordinator never knows the difference.
 
+One transport caveat, verified live and worth knowing before you depend on it: WebSocketActors 1.1.0 does not propagate thrown errors. Its throw path sends an empty payload by design, so a remote `tell` failure never reaches the worker (the call looks successful) and other throwing calls surface as decoding errors instead of their real cases. Return values — specs, prune votes, counts — cross the socket fine; throws do not. Design remote workers accordingly: bounded trial counts, heartbeats through `report` values, and treat this transport as error-blind. Transports that serialize errors preserve the full typed taxonomy.
+
 ## Next steps
 
 - Persist with journal for multi-writer clusters, sqlite for dashboard visibility: <doc:StorageAndDashboard>
