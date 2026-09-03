@@ -47,6 +47,48 @@ public struct DistributedTrialResult: Sendable, Codable {
         self.userAttrs = userAttrs
     }
 
+    /// Creates a single-objective completed trial result with typed keys.
+    ///
+    /// Distinct `constraintPairs` / `userAttrPairs` labels keep this overload
+    /// unambiguous next to the `[String: ...]` dictionary initializers.
+    ///
+    /// - Parameters:
+    ///   - constraintPairs: (`ConstraintKey`, value) pairs. For `ConstraintKeyProtocol`
+    ///     types, wrap the name: `ConstraintKey(MyKey.name)`.
+    ///   - userAttrPairs: (name, value) pairs serialized via ``AttributeConvertible``.
+    ///     For typed keys, pass `MyKey.name` as the name.
+    public init(
+        trialNumber: Int,
+        value: Double,
+        constraintPairs: [(ConstraintKey, Double)],
+        userAttrPairs: [(String, any AttributeConvertible)]
+    ) {
+        self.init(
+            trialNumber: trialNumber,
+            values: [value],
+            state: .complete,
+            constraints: Dictionary(uniqueKeysWithValues: constraintPairs.map { ($0.0.name, $0.1) }),
+            userAttrs: Dictionary(uniqueKeysWithValues: userAttrPairs.map { ($0.0, $0.1.toAttributeString()) })
+        )
+    }
+
+    /// Creates a multi-objective trial result with typed keys.
+    public init(
+        trialNumber: Int,
+        values: [Double],
+        state: TrialState = .complete,
+        constraintPairs: [(ConstraintKey, Double)],
+        userAttrPairs: [(String, any AttributeConvertible)]
+    ) {
+        self.init(
+            trialNumber: trialNumber,
+            values: values,
+            state: state,
+            constraints: Dictionary(uniqueKeysWithValues: constraintPairs.map { ($0.0.name, $0.1) }),
+            userAttrs: Dictionary(uniqueKeysWithValues: userAttrPairs.map { ($0.0, $0.1.toAttributeString()) })
+        )
+    }
+
     /// Factory method for creating an early-pruned trial result.
     public static func pruned(trialNumber: Int) -> DistributedTrialResult {
         DistributedTrialResult(

@@ -169,17 +169,39 @@ public final class Study: @unchecked Sendable {
         values: [Double],
         state: TrialState = .complete
     ) throws(SwiftunaError) {
+        let trialNumber = trial.number
+        let intermediateSteps = Dictionary(
+            uniqueKeysWithValues: trial.intermediateSteps.map { ($0.step, $0.value) }
+        )
+        _ = trial.takeHandle()  // Release from trial deinit
+
+        try tellRecorded(
+            trialNumber: trialNumber,
+            state: state,
+            values: values,
+            intermediateSteps: intermediateSteps
+        )
+    }
+
+    /// Records a detached trial outcome in storage.
+    ///
+    /// Shared by ``tell(consuming:values:state:)`` and `SwiftunaDistributed`'s
+    /// coordinator so both paths serialize intermediates and call FFI identically.
+    /// The caller owns handle lifecycle: the trial handle must already be
+    /// detached (or never read again) before calling.
+    package func tellRecorded(
+        trialNumber: Int,
+        state: TrialState,
+        values: [Double],
+        intermediateSteps: [Int: Double]
+    ) throws(SwiftunaError) {
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is expired or invalid")
         }
 
-        let trialNumber = trial.number
-        let intermediateSteps = trial.intermediateSteps
-        _ = trial.takeHandle()  // Release from trial deinit
-
         var intermediateJsonStr: String?
         if !intermediateSteps.isEmpty {
-            let stepMap = Dictionary(uniqueKeysWithValues: intermediateSteps.map { (String($0.step), $0.value) })
+            let stepMap = Dictionary(uniqueKeysWithValues: intermediateSteps.map { (String($0.key), $0.value) })
             if let data = try? JSONEncoder().encode(stepMap) {
                 intermediateJsonStr = String(data: data, encoding: .utf8)
             }

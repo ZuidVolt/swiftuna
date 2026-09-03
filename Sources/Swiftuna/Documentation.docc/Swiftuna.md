@@ -57,6 +57,8 @@ if let best = try study.bestTrial {
 - <doc:StorageAndDashboard>
 - <doc:TypeSafeAttributes>
 - <doc:TelemetryAndObservability>
+- <doc:DistributedOptimization>
+- <doc:GPUAndMLX>
 
 ### Optimization core
 - ``Study``
