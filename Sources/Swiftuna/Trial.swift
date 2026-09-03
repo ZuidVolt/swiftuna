@@ -343,9 +343,7 @@ public struct Trial: ~Copyable {
         guard let raw else {
             throw SwiftunaError.handleExpired("Trial handle is expired or invalid")
         }
-        guard !value.isNaN else {
-            throw SwiftunaError.invalidArgument("Constraint value for '\(name)' cannot be NaN")
-        }
+        try validateConstraint(name: name, value: value)
         guard !localConstraints.keys.contains(name) else {
             throw SwiftunaError.attrOverwriteNotAllowed("Constraint '\(name)' is already set on trial #\(number)")
         }
@@ -516,6 +514,59 @@ public struct Trial: ~Copyable {
         let step = intermediateSteps.last?.step ?? 0
         let val = intermediateSteps.last?.value ?? 0.0
         throw SwiftunaError.trialPruned(reason: reason ?? "Pruned at step \(step) with value \(val)")
+    }
+
+    /// Suggests the parameter described by a declarative ``SearchParam``.
+    ///
+    /// This is the shared per-type sampling path: `Trial` closures,
+    /// `SearchSpaceParams`, and the distributed coordinator all funnel through
+    /// this method, so a distribution behaves identically everywhere.
+    ///
+    /// - Returns: The parameter name and its sampled ``ParameterValue``.
+    public mutating func suggest(_ param: SearchParam) throws(SwiftunaError) -> (String, ParameterValue) {
+        switch param {
+        case .float(let name, let lower, let upper, let log, let step):
+            let value = try suggest(name, in: lower...upper, step: step, log: log)
+            return (name, .double(value))
+        case .int(let name, let lower, let upper, let step, let log):
+            let value = try suggest(name, in: lower...upper, step: step, log: log)
+            return (name, .int(value))
+        case .categorical(let name, let choices):
+            let value = try suggest(name, choices: choices)
+            return (name, value)
+        }
+    }
+}
+
+/// One declarative parameter in a search space.
+///
+/// Unlike an `AskFunction` closure, `SearchParam` values are plain data:
+/// `Codable` for logging and transmission, `Equatable` for testing.
+/// See `SearchSpaceParams` (SwiftunaDistributed) for the ordered collection.
+public enum SearchParam: Sendable, Codable, Equatable {
+    /// Floating-point range, mirroring `Trial.suggest(_:in:step:log:)`.
+    case float(name: String, lower: Double, upper: Double, log: Bool = false, step: Double? = nil)
+    /// Integer range, mirroring `Trial.suggest(_:in:step:log:)`.
+    case int(name: String, lower: Int, upper: Int, step: Int = 1, log: Bool = false)
+    /// Categorical choices, mirroring `Trial.suggest(_:choices:)`.
+    case categorical(name: String, choices: [ParameterValue])
+
+    /// The parameter name suggested by this descriptor.
+    public var name: String {
+        switch self {
+        case .float(let name, _, _, _, _): return name
+        case .int(let name, _, _, _, _): return name
+        case .categorical(let name, _): return name
+        }
+    }
+}
+
+/// Validates a constraint value the same way for local and distributed trials.
+///
+/// - Throws: `SwiftunaError.invalidArgument` if `value` is NaN.
+package func validateConstraint(name: String, value: Double) throws(SwiftunaError) {
+    guard !value.isNaN else {
+        throw SwiftunaError.invalidArgument("Constraint value for '\(name)' cannot be NaN")
     }
 }
 

@@ -1,8 +1,12 @@
 import Foundation
 public import Swiftuna
 
-/// The serialized specification of an active hyperparameter trial dispatched over the network to a remote worker.
-public struct DistributedTrialSpec: Sendable, Codable, Identifiable, Hashable {
+/// A trial checked out to a remote worker, as returned by ``StudyCoordinator/ask()``.
+///
+/// This is the trial from the worker's perspective: sampled values to evaluate,
+/// without the noncopyable `Trial` itself, which can never cross a process
+/// boundary. Read values through the ``ParamReadable`` accessors.
+public struct DistributedTrial: Sendable, Codable, Identifiable, Hashable, ParamReadable {
     /// The unique trial number within the study.
     public var id: Int { trialNumber }
 
@@ -12,7 +16,7 @@ public struct DistributedTrialSpec: Sendable, Codable, Identifiable, Hashable {
     /// Dictionary of sampled hyperparameter values.
     public let params: [String: ParameterValue]
 
-    /// Creates a distributed trial specification.
+    /// Creates a distributed trial.
     public init(trialNumber: Int, params: [String: ParameterValue]) {
         self.trialNumber = trialNumber
         self.params = params

@@ -9,16 +9,20 @@ internal import LibRustuna
 /// metrics and receive early-stopping recommendations, and ``tell(_:)`` to record final outcomes.
 public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: DistributedActorSystem<any Codable> {
     private let study: Study
-    private let searchSpace: SearchSpace
+    private let askFunction: AskFunction
     private var inFlight: [Int: InFlightTrial] = [:]
-    private var completedCount: Int = 0
-    private var finishedCount: Int = 0
+    private var finishedCounts: [TrialState: Int] = [:]
     private let maxInFlight: Int
     private let leasePolicy: LeasePolicy?
-    private var finishedNumbers: Set<Int> = []
-    private var expiredNumbers: Set<Int> = []
+    /// How a retired trial number left the in-flight table.
+    private enum Retirement {
+        case finished
+        case expired
+    }
 
-    /// Creates a coordinator for `study`, sampling from `searchSpace`.
+    private var retired: [Int: Retirement] = [:]
+
+    /// Creates a coordinator for `study`, sampling from `askFunction`.
     ///
     /// The coordinator assumes exclusive access to `study` while trials are in
     /// flight: touching the study directly (e.g. `study.trials`, `study.ask()`)
@@ -38,13 +42,13 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
     ///     preserving exact pre-lease behavior.
     public init(
         study: Study,
-        searchSpace: SearchSpace,
+        askFunction: AskFunction,
         actorSystem: ActorSystem,
         maxInFlight: Int = .max,
         leasePolicy: LeasePolicy? = nil
     ) {
         self.study = study
-        self.searchSpace = searchSpace
+        self.askFunction = askFunction
         self.maxInFlight = max(1, maxInFlight)
         self.leasePolicy = leasePolicy
         self.actorSystem = actorSystem
@@ -61,23 +65,53 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
 
     /// Dispatches the next hyperparameter configuration to an active worker.
     ///
-    /// - Throws: ``SwiftunaDistributedError/tooManyInFlight(_:)`` when the
-    ///   in-flight cap is reached, or ``SwiftunaDistributedError/searchSpaceExhausted``
-    ///   when a discrete sampler (e.g. ``GridSampler``) has no untried configurations left.
-    public distributed func ask() throws -> DistributedTrialSpec {
-        reapExpired()
-        guard inFlight.count < maxInFlight else {
-            throw SwiftunaDistributedError.tooManyInFlight(inFlight.count)
+    /// With the default zero timeout this returns at once, throwing
+    /// ``SwiftunaDistributedError/tooManyInFlight(_:)`` at capacity. Pass a
+    /// longer timeout to wait for a worker to finish instead. Reaping applies
+    /// during the wait, and an exhausted search space throws
+    /// ``SwiftunaDistributedError/searchSpaceExhausted`` at once rather than
+    /// after the full timeout.
+    public distributed func ask(waitingUpTo timeout: Duration = .zero) async throws -> DistributedTrial {
+        if timeout <= .zero {
+            reapExpired()
+            guard inFlight.count < maxInFlight else {
+                throw SwiftunaDistributedError.tooManyInFlight(inFlight.count)
+            }
+            return try askNow()
         }
+        let deadline = ContinuousClock.now + timeout
+        while true {
+            reapExpired()
+            if inFlight.count < maxInFlight {
+                do {
+                    return try askNow()
+                } catch SwiftunaDistributedError.searchSpaceExhausted {
+                    throw SwiftunaDistributedError.searchSpaceExhausted
+                } catch {
+                    // Sampling failures other than exhaustion (e.g. transient
+                    // storage errors) are retried until the deadline.
+                    if ContinuousClock.now >= deadline {
+                        throw SwiftunaDistributedError.studyError(String(describing: error))
+                    }
+                }
+            } else if ContinuousClock.now >= deadline {
+                throw SwiftunaDistributedError.tooManyInFlight(inFlight.count)
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    /// Samples one trial and tracks its handle. Callers own cap and reap checks.
+    private func askNow() throws -> DistributedTrial {
         do {
             var trial = try study.ask()
-            let params = try searchSpace.sample(trial: &trial)
+            let params = try askFunction.sample(trial: &trial)
             let trialNumber = trial.number
             guard let handle = trial.takeHandle() else {
                 throw SwiftunaDistributedError.studyError("Failed to take handle for trial #\(trialNumber)")
             }
             inFlight[trialNumber] = InFlightTrial(rawHandle: handle, trialNumber: trialNumber)
-            return DistributedTrialSpec(trialNumber: trialNumber, params: params)
+            return DistributedTrial(trialNumber: trialNumber, params: params)
         } catch SwiftunaError.searchSpaceExhausted {
             throw SwiftunaDistributedError.searchSpaceExhausted
         } catch {
@@ -90,16 +124,14 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
     /// Reporting the same `step` twice keeps the latest value; earlier values for
     /// that step are overwritten and never reach storage.
     public distributed func report(trialNumber: Int, step: Int, value: Double) throws -> Bool {
-        if let active = inFlight[trialNumber] {
-            // Heartbeat first: a live worker must not be reaped by its own report.
-            active.leasedAt = .now
-        }
-        reapExpired()
+        // Reap everything except this trial first: a live worker must not be
+        // reaped by its own report, which doubles as its heartbeat.
+        reapExpired(except: trialNumber)
         guard let active = inFlight[trialNumber] else {
             throw terminalError(for: trialNumber)
         }
-        active.intermediateSteps[step] = value
         active.leasedAt = .now
+        active.intermediateSteps[step] = value
         return try wrap {
             try study.pruner.shouldPrune(
                 study: study,
@@ -123,9 +155,14 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
             throw terminalError(for: result.trialNumber)
         }
 
-        for (name, value) in result.constraints where value.isNaN {
-            throw SwiftunaDistributedError.invalidConstraint(
-                "Constraint '\(name)' value cannot be NaN (trial #\(result.trialNumber))")
+        for (name, value) in result.constraints {
+            do {
+                try validateConstraint(name: name, value: value)
+            } catch SwiftunaError.invalidArgument(let message) {
+                throw SwiftunaDistributedError.invalidConstraint("\(message) (trial #\(result.trialNumber))")
+            } catch {
+                throw SwiftunaDistributedError.studyError(String(describing: error))
+            }
         }
 
         guard let handle = active.rawHandle else {
@@ -161,63 +198,52 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
         if let handle = active.takeHandle() {
             rustuna_trial_free(handle)
         }
-        retire(result.trialNumber, expired: false)
+        retire(result.trialNumber, as: .finished)
 
-        finishedCount += 1
-        if result.state == .complete {
-            completedCount += 1
-        }
+        finishedCounts[result.state, default: 0] += 1
     }
 
     /// Reaps trials whose lease lapsed. Runs piggybacked on `ask`/`report`;
-    /// there are no background timers.
-    private func reapExpired() {
+    /// there are no background timers. `except` skips one trial number, used
+    /// so a reporting worker never reaps itself.
+    private func reapExpired(except: Int? = nil) {
         guard let policy = leasePolicy else { return }
         let now = ContinuousClock.now
-        for (number, active) in inFlight where now - active.leasedAt > .seconds(policy.timeoutSeconds) {
-            switch policy.onExpiry {
-            case .failTrial:
-                try? study.tellRecorded(
-                    trialNumber: number,
-                    state: .fail,
-                    values: [],
-                    intermediateSteps: active.intermediateSteps
-                )
-            }
+        for (number, active) in inFlight
+        where number != except && now - active.leasedAt > policy.timeout {
+            try? study.tellRecorded(
+                trialNumber: number,
+                state: .fail,
+                values: [],
+                intermediateSteps: active.intermediateSteps
+            )
             inFlight.removeValue(forKey: number)
             if let handle = active.takeHandle() {
                 rustuna_trial_free(handle)
             }
-            retire(number, expired: true)
-            finishedCount += 1
+            retire(number, as: .expired)
+            finishedCounts[.fail, default: 0] += 1
         }
     }
 
     /// Specific terminal error for a trial number that is no longer in flight.
     private func terminalError(for trialNumber: Int) -> SwiftunaDistributedError {
-        if expiredNumbers.contains(trialNumber) {
-            return .leaseExpired(trialNumber)
+        switch retired[trialNumber] {
+        case .expired: return .leaseExpired(trialNumber)
+        case .finished: return .trialAlreadyFinished(trialNumber)
+        case nil: return .trialNotFound(trialNumber)
         }
-        if finishedNumbers.contains(trialNumber) {
-            return .trialAlreadyFinished(trialNumber)
-        }
-        return .trialNotFound(trialNumber)
     }
 
-    /// Remembers a retired trial number, trimming both sets past the cap.
+    /// Remembers how a trial number retired, trimming past the cap.
     ///
-    /// Retirement is approximate: past `retiredNumberCap` entries both sets are
+    /// Retirement is approximate: past `retiredNumberCap` entries the table is
     /// cleared, so a very old duplicate `tell` may report `trialNotFound`
     /// instead of its specific terminal error.
-    private func retire(_ trialNumber: Int, expired: Bool) {
-        if expired {
-            expiredNumbers.insert(trialNumber)
-        } else {
-            finishedNumbers.insert(trialNumber)
-        }
-        if finishedNumbers.count + expiredNumbers.count > retiredNumberCap {
-            finishedNumbers.removeAll(keepingCapacity: true)
-            expiredNumbers.removeAll(keepingCapacity: true)
+    private func retire(_ trialNumber: Int, as fate: Retirement) {
+        retired[trialNumber] = fate
+        if retired.count > retiredNumberCap {
+            retired.removeAll(keepingCapacity: true)
         }
     }
 
@@ -268,13 +294,14 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
         inFlight.count
     }
 
-    /// Returns the number of trials that finished with `.complete` state.
-    public distributed func completedTrialsCount() -> Int {
-        completedCount
-    }
-
-    /// Returns the number of trials in any terminal state (`.complete`, `.pruned`, or `.fail`).
-    public distributed func finishedTrialsCount() -> Int {
-        finishedCount
+    /// Returns the number of finished trials, optionally filtered by state.
+    ///
+    /// With no filter this counts every terminal state (`.complete`,
+    /// `.pruned`, `.fail`). Pass `[.complete]` for the completed-only count.
+    public distributed func finishedTrialsCount(where states: Set<TrialState>? = nil) -> Int {
+        guard let states else {
+            return finishedCounts.values.reduce(0, +)
+        }
+        return states.reduce(0) { $0 + (finishedCounts[$1] ?? 0) }
     }
 }

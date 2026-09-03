@@ -21,4 +21,19 @@ public enum SwiftunaDistributedError: Error, Sendable, Codable, CustomStringConv
         case .studyError(let msg): return "Study error: \(msg)"
         }
     }
+
+    /// Whether retrying the same call can succeed.
+    ///
+    /// Only `tooManyInFlight` qualifies: wait for a slot (or use
+    /// `ask(waitingUpTo:)`) and retry. Every other case needs a different
+    /// call — a corrected payload, a new trial, or operator intervention —
+    /// so blind retry loops should stop on them.
+    public var isRetryable: Bool {
+        switch self {
+        case .tooManyInFlight: return true
+        case .trialNotFound, .trialAlreadyFinished, .leaseExpired,
+            .searchSpaceExhausted, .invalidConstraint, .studyError:
+            return false
+        }
+    }
 }

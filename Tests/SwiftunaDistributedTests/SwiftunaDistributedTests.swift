@@ -13,7 +13,7 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_test_1")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -10.0...10.0)
             let opt = try trial.suggest("optimizer", choices: ["adam", "sgd"])
             return [
@@ -22,7 +22,7 @@ struct SwiftunaDistributedTests {
             ]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         // 1. Worker asks for trial
         let trialSpec = try await coordinator.ask()
@@ -47,7 +47,7 @@ struct SwiftunaDistributedTests {
         try await coordinator.tell(result)
 
         // 3. Verify state
-        let completed = try await coordinator.completedTrialsCount()
+        let completed = try await coordinator.finishedTrialsCount(where: [.complete])
         #expect(completed == 1)
         let inFlightAfter = try await coordinator.inFlightCount()
         #expect(inFlightAfter == 0)
@@ -66,22 +66,22 @@ struct SwiftunaDistributedTests {
         let pruner = MedianPruner(nStartupTrials: 2, nWarmupSteps: 1)
         let study = try createStudy(name: "dist_pruning_test", pruner: pruner)
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let lr = try trial.suggest("lr", in: 1e-4...1e-1)
             return ["lr": .double(lr)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         // Prime the study with 2 successful baseline trials
         for _ in 0..<2 {
-            let spec = try await coordinator.ask()
-            _ = try await coordinator.report(trialNumber: spec.trialNumber, step: 1, value: 1.0)
-            _ = try await coordinator.report(trialNumber: spec.trialNumber, step: 2, value: 0.8)
-            try await coordinator.tell(DistributedTrialResult(trialNumber: spec.trialNumber, value: 0.8))
+            let trial = try await coordinator.ask()
+            _ = try await coordinator.report(trialNumber: trial.trialNumber, step: 1, value: 1.0)
+            _ = try await coordinator.report(trialNumber: trial.trialNumber, step: 2, value: 0.8)
+            try await coordinator.tell(DistributedTrialResult(trialNumber: trial.trialNumber, value: 0.8))
         }
 
-        let completedEarly = try await coordinator.completedTrialsCount()
+        let completedEarly = try await coordinator.finishedTrialsCount(where: [.complete])
         #expect(completedEarly == 2)
 
         // Third trial reports a terribly diverging validation loss
@@ -107,12 +107,12 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_cluster_sim")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         let totalTrials = 16
         let workerCount = 4
@@ -123,8 +123,8 @@ struct SwiftunaDistributedTests {
                 group.addTask {
                     var trialsEvaluated = 0
                     while trialsEvaluated < (totalTrials / workerCount) {
-                        let spec = try await coordinator.ask()
-                        let x = spec.double("x")!
+                        let trial = try await coordinator.ask()
+                        let x = trial.double("x")!
 
                         // Simulate remote compute
                         try await Task.sleep(for: .milliseconds(5))
@@ -132,7 +132,7 @@ struct SwiftunaDistributedTests {
                         let loss = (x - 2.5) * (x - 2.5)
                         try await coordinator.tell(
                             DistributedTrialResult(
-                                trialNumber: spec.trialNumber,
+                                trialNumber: trial.trialNumber,
                                 value: loss,
                                 userAttrs: ["worker": "worker-\(workerId)"]
                             ))
@@ -143,7 +143,7 @@ struct SwiftunaDistributedTests {
             while (try await group.next()) != nil {}
         }
 
-        let completed = try await coordinator.completedTrialsCount()
+        let completed = try await coordinator.finishedTrialsCount(where: [.complete])
         #expect(completed == totalTrials)
         let inFlightEnd = try await coordinator.inFlightCount()
         #expect(inFlightEnd == 0)
@@ -158,19 +158,19 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_retry_test", directions: [.minimize, .minimize])
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
 
         // Wrong values count for a 2-direction study: must throw and retain the trial.
         do {
             try await coordinator.tell(
-                DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
             Issue.record("Expected tell with mismatched values count to throw")
         } catch {
             // Expected.
@@ -179,11 +179,11 @@ struct SwiftunaDistributedTests {
         #expect(try await coordinator.finishedTrialsCount() == 0)
 
         // Retry with corrected values succeeds.
-        let x = spec.double("x")!
+        let x = trial.double("x")!
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, values: [x * x, x * x]))
+            DistributedTrialResult(trialNumber: trial.trialNumber, values: [x * x, x * x]))
         #expect(try await coordinator.inFlightCount() == 0)
-        #expect(try await coordinator.completedTrialsCount() == 1)
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 1)
         #expect(try await coordinator.finishedTrialsCount() == 1)
     }
 
@@ -192,12 +192,12 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_counts_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         let complete = try await coordinator.ask()
         try await coordinator.tell(
@@ -209,7 +209,7 @@ struct SwiftunaDistributedTests {
         let failed = try await coordinator.ask()
         try await coordinator.tell(.failed(trialNumber: failed.trialNumber))
 
-        #expect(try await coordinator.completedTrialsCount() == 1)
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 1)
         #expect(try await coordinator.finishedTrialsCount() == 3)
         #expect(try await coordinator.inFlightCount() == 0)
     }
@@ -219,20 +219,20 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_report_overwrite_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
-        let spec = try await coordinator.ask()
-        _ = try await coordinator.report(trialNumber: spec.trialNumber, step: 1, value: 1.0)
-        _ = try await coordinator.report(trialNumber: spec.trialNumber, step: 1, value: 2.0)
+        let trial = try await coordinator.ask()
+        _ = try await coordinator.report(trialNumber: trial.trialNumber, step: 1, value: 1.0)
+        _ = try await coordinator.report(trialNumber: trial.trialNumber, step: 1, value: 2.0)
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, value: 0.5))
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 0.5))
 
-        let persisted = try await coordinator.trials().first { $0.number == spec.trialNumber }
+        let persisted = try await coordinator.trials().first { $0.number == trial.trialNumber }
         #expect(persisted?.intermediateValues[1] == 2.0)
     }
 
@@ -242,17 +242,17 @@ struct SwiftunaDistributedTests {
         let sampler = GridSampler(searchSpace: ["a": [0.0, 1.0]])
         let study = try createStudy(name: "dist_exhausted_test", sampler: sampler)
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let a = try trial.suggest("a", in: 0.0...1.0)
             return ["a": .double(a)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         for _ in 0..<2 {
-            let spec = try await coordinator.ask()
+            let trial = try await coordinator.ask()
             try await coordinator.tell(
-                DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
         }
 
         do {
@@ -270,13 +270,13 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_cap_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
         let coordinator = StudyCoordinator(
-            study: study, searchSpace: space, actorSystem: system, maxInFlight: 1)
+            study: study, askFunction: space, actorSystem: system, maxInFlight: 1)
 
         let first = try await coordinator.ask()
 
@@ -296,7 +296,7 @@ struct SwiftunaDistributedTests {
         let second = try await coordinator.ask()
         try await coordinator.tell(
             DistributedTrialResult(trialNumber: second.trialNumber, value: 0.5))
-        #expect(try await coordinator.completedTrialsCount() == 2)
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 2)
     }
 
     @Test("Read APIs mirror local study state")
@@ -305,19 +305,19 @@ struct SwiftunaDistributedTests {
         let study = try createStudy(
             name: "dist_reads_test", directions: [.minimize, .minimize])
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         for _ in 0..<5 {
-            let spec = try await coordinator.ask()
-            let x = spec.double("x")!
+            let trial = try await coordinator.ask()
+            let x = trial.double("x")!
             try await coordinator.tell(
                 DistributedTrialResult(
-                    trialNumber: spec.trialNumber, values: [x * x, (x - 1.0) * (x - 1.0)]))
+                    trialNumber: trial.trialNumber, values: [x * x, (x - 1.0) * (x - 1.0)]))
         }
         let pruned = try await coordinator.ask()
         try await coordinator.tell(.pruned(trialNumber: pruned.trialNumber))
@@ -341,18 +341,18 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_importance_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         for _ in 0..<10 {
-            let spec = try await coordinator.ask()
-            let x = spec.double("x")!
+            let trial = try await coordinator.ask()
+            let x = trial.double("x")!
             try await coordinator.tell(
-                DistributedTrialResult(trialNumber: spec.trialNumber, value: x * x))
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: x * x))
         }
 
         let importances = try await coordinator.paramImportances(normalize: true, params: nil)
@@ -363,29 +363,29 @@ struct SwiftunaDistributedTests {
     func testLeaseExpiryReapsAsFailed() async throws {
         let (coordinator, _) = try makeTestCoordinator(
             named: "dist_lease",
-            leasePolicy: LeasePolicy(timeoutSeconds: 0.05)
+            leasePolicy: LeasePolicy(timeout: .seconds(0.05))
         ) { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
         try await Task.sleep(for: .milliseconds(150))
 
         // Next ask triggers the reap: slot freed, trial recorded as failed.
         _ = try await coordinator.ask()
         #expect(try await coordinator.inFlightCount() == 1)
         #expect(try await coordinator.finishedTrialsCount() == 1)
-        #expect(try await coordinator.completedTrialsCount() == 0)
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 0)
         #expect(try await coordinator.trials(where: [.fail]).count == 1)
 
         // Stale tell for the expired trial reports the lease, not a missing trial.
         do {
             try await coordinator.tell(
-                DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
             Issue.record("Expected leaseExpired error")
         } catch SwiftunaDistributedError.leaseExpired(let num) {
-            #expect(num == spec.trialNumber)
+            #expect(num == trial.trialNumber)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -395,45 +395,46 @@ struct SwiftunaDistributedTests {
     func testHeartbeatExtendsLease() async throws {
         let (coordinator, _) = try makeTestCoordinator(
             named: "dist_heartbeat",
-            leasePolicy: LeasePolicy(timeoutSeconds: 0.5)
+            leasePolicy: LeasePolicy(timeout: .seconds(0.5))
         ) { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
         for step in 1...3 {
             try await Task.sleep(for: .milliseconds(100))
-            _ = try await coordinator.report(trialNumber: spec.trialNumber, step: step, value: 1.0)
+            _ = try await coordinator.report(trialNumber: trial.trialNumber, step: step, value: 1.0)
         }
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
-        #expect(try await coordinator.completedTrialsCount() == 1)
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 1)
         #expect(try await coordinator.finishedTrialsCount() == 1)
     }
 
     @Test("Duplicate tell reports trialAlreadyFinished")
-    func testDuplicateTell() async throws {        let (coordinator, _) = try makeTestCoordinator(named: "dist_dupe") { trial in
+    func testDuplicateTell() async throws {
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_dupe") { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
 
         do {
             try await coordinator.tell(
-                DistributedTrialResult(trialNumber: spec.trialNumber, value: 2.0))
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: 2.0))
             Issue.record("Expected trialAlreadyFinished error")
         } catch SwiftunaDistributedError.trialAlreadyFinished(let num) {
-            #expect(num == spec.trialNumber)
+            #expect(num == trial.trialNumber)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
 
         do {
-            _ = try await coordinator.report(trialNumber: spec.trialNumber, step: 1, value: 1.0)
+            _ = try await coordinator.report(trialNumber: trial.trialNumber, step: 1, value: 1.0)
             Issue.record("Expected trialAlreadyFinished error")
         } catch SwiftunaDistributedError.trialAlreadyFinished {
             // Expected.
@@ -458,19 +459,19 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_nan_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
 
         do {
             try await coordinator.tell(
                 DistributedTrialResult(
-                    trialNumber: spec.trialNumber,
+                    trialNumber: trial.trialNumber,
                     value: 1.0,
                     constraints: ["bad": .nan]))
             Issue.record("Expected invalidConstraint error")
@@ -482,8 +483,8 @@ struct SwiftunaDistributedTests {
         #expect(try await coordinator.inFlightCount() == 1)
 
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
-        #expect(try await coordinator.completedTrialsCount() == 1)
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 1)
     }
 
     @Test("Typed key-pair payloads round-trip through storage")
@@ -491,22 +492,22 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_typed_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
-        let spec = try await coordinator.ask()
+        let trial = try await coordinator.ask()
         try await coordinator.tell(
             DistributedTrialResult(
-                trialNumber: spec.trialNumber,
+                trialNumber: trial.trialNumber,
                 value: 0.25,
                 constraintPairs: [(ConstraintKey("dist_limit"), -1.5)],
                 userAttrPairs: [(AttributeKey.distRegion.name, "eu")]))
 
-        let persisted = try await coordinator.trials().first { $0.number == spec.trialNumber }
+        let persisted = try await coordinator.trials().first { $0.number == trial.trialNumber }
         #expect(persisted?.constraints["dist_limit"] == -1.5)
         #expect(persisted?[AttributeKey.distRegion] == "eu")
     }
@@ -516,16 +517,16 @@ struct SwiftunaDistributedTests {
         let system = LocalTestingDistributedActorSystem()
         let study = try createStudy(name: "dist_context_test")
 
-        let space = SearchSpace { trial in
+        let space = AskFunction { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             return ["x": .double(x)]
         }
 
-        let coordinator = StudyCoordinator(study: study, searchSpace: space, actorSystem: system)
+        let coordinator = StudyCoordinator(study: study, askFunction: space, actorSystem: system)
 
         for _ in 0..<3 {
             let ctx = try await DistributedTrialContext.checkout(from: coordinator)
-            let x = ctx.spec.double("x")!
+            let x = ctx.trial.double("x")!
             _ = try await ctx.report(step: 1, value: x * x)
             try await ctx.tell(
                 value: x * x,
@@ -533,7 +534,7 @@ struct SwiftunaDistributedTests {
                 userAttrPairs: [(AttributeKey.distRegion.name, "local")])
         }
 
-        #expect(try await coordinator.completedTrialsCount() == 3)
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 3)
         #expect(try await coordinator.finishedTrialsCount() == 3)
         #expect(try await coordinator.inFlightCount() == 0)
         let best = try await coordinator.bestTrial()
@@ -575,22 +576,24 @@ struct SwiftunaDistributedTests {
     @Test("Custom hatch overrides declarative params and fills gaps")
     func testCustomHatch() async throws {
         let dsl = SearchSpaceParams([.float(name: "x", lower: 0.0, upper: 1.0)])
-        let space = SearchSpace(params: dsl) { trial in
+        let space = AskFunction(params: dsl) { trial in
             let x = try trial.suggest("x", in: 0.0...1.0)
             // Conditional dim the DSL cannot express alone.
             let layers = x > 0.5 ? 4 : 2
             return ["x": .double(42.0), "layers": .int(layers)]
         }
 
-        let (coordinator, _) = try makeTestCoordinator(named: "dist_hatch", sample: { trial in
-            try space.sample(trial: &trial)
-        })
+        let (coordinator, _) = try makeTestCoordinator(
+            named: "dist_hatch",
+            sample: { trial in
+                try space.sample(trial: &trial)
+            })
 
-        let spec = try await coordinator.ask()
-        #expect(spec.double("x") == 42.0) // procedural entry wins on collision
-        #expect(spec.int("layers") == 2 || spec.int("layers") == 4)
+        let trial = try await coordinator.ask()
+        #expect(trial.double("x") == 42.0)  // procedural entry wins on collision
+        #expect(trial.int("layers") == 2 || trial.int("layers") == 4)
         try await coordinator.tell(
-            DistributedTrialResult(trialNumber: spec.trialNumber, value: 1.0))
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
     }
 
     @Test("SearchSpaceParams round-trips through Codable and rejects duplicates")
@@ -620,8 +623,293 @@ struct SwiftunaDistributedTests {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    @Test("optimize() runs trials across workers in one call")
+    func testDrive() async throws {
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_drive") { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        try await optimize(coordinator: coordinator, nTrials: 20, workers: 4) { ctx in
+            let x = ctx.trial.double("x")!
+            return x * x
+        }
+
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 20)
+        #expect(try await coordinator.inFlightCount() == 0)
+        let best = try await coordinator.bestTrial()
+        #expect(best?.value != nil)
+    }
+
+    @Test("optimize() records failed trial and rethrows objective errors")
+    func testDriveThrowAborts() async throws {
+        struct Boom: Error {}
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_drive_throw") { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        do {
+            try await optimize(coordinator: coordinator, nTrials: 10, workers: 1) { ctx in
+                if ctx.trialNumber == 2 { throw Boom() }
+                return 1.0
+            }
+            Issue.record("Expected Boom to propagate")
+        } catch is Boom {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 2)
+        #expect(try await coordinator.trials(where: [.fail]).count == 1)
+        #expect(try await coordinator.inFlightCount() == 0)
+    }
+
+    @Test("optimize() skips completion tell when objective settles the trial")
+    func testDriveSelfSettled() async throws {        let (coordinator, _) = try makeTestCoordinator(named: "dist_drive_self") { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        try await optimize(coordinator: coordinator, nTrials: 4, workers: 1) { ctx in
+            let x = ctx.trial.double("x")!
+            if x > 0.0 {
+                try await ctx.prune()
+                return 0.0  // ignored: trial already settled
+            }
+            return x * x
+        }
+
+        #expect(try await coordinator.finishedTrialsCount() == 4)
+        #expect(try await coordinator.inFlightCount() == 0)
+    }
+
+    @Test("ask(waitingUpTo:) returns when a slot frees mid-wait")
+    func testBlockingAskWakesOnTell() async throws {
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_wait", maxInFlight: 1) { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        let first = try await coordinator.ask()
+        _ = Task {
+            try await Task.sleep(for: .milliseconds(50))
+            try await coordinator.tell(
+                DistributedTrialResult(trialNumber: first.trialNumber, value: 1.0))
+        }
+
+        let start = ContinuousClock.now
+        let second = try await coordinator.ask(waitingUpTo: .seconds(5))
+        let waited = ContinuousClock.now - start
+        #expect(waited >= .milliseconds(30)) // proof it waited, not spuriously passed
+        #expect(second.trialNumber != first.trialNumber)
+        try await coordinator.tell(
+            DistributedTrialResult(trialNumber: second.trialNumber, value: 0.5))
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 2)
+    }
+
+    @Test("ask(waitingUpTo:) throws tooManyInFlight after the timeout")
+    func testBlockingAskTimesOut() async throws {
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_wait_timeout", maxInFlight: 1) { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        _ = try await coordinator.ask() // slot stays full: nobody tells
+        do {
+            _ = try await coordinator.ask(waitingUpTo: .milliseconds(100))
+            Issue.record("Expected tooManyInFlight error")
+        } catch SwiftunaDistributedError.tooManyInFlight(let count) {
+            #expect(count == 1)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("ask(waitingUpTo:) surfaces exhaustion at once, not after the timeout")
+    func testBlockingAskExhaustionFast() async throws {
+        let grid: [String: GridSampler.ValueList] = ["a": [0.0]]
+        let (coordinator, _) = try makeTestCoordinator(
+            named: "dist_wait_exhausted",
+            sampler: GridSampler(searchSpace: grid)
+        ) { trial in
+            let a = try trial.suggest("a", in: 0.0...1.0)
+            return ["a": .double(a)]
+        }
+
+        let trial = try await coordinator.ask()
+        try await coordinator.tell(
+            DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
+
+        let start = ContinuousClock.now
+        do {
+            _ = try await coordinator.ask(waitingUpTo: .seconds(30))
+            Issue.record("Expected searchSpaceExhausted error")
+        } catch SwiftunaDistributedError.searchSpaceExhausted {
+            #expect(ContinuousClock.now - start < .seconds(5))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("ParamReadable reads identically on both carriers")
+    func testParamReadableParity() {
+        enum Optimizer: String {
+            case adam, sgd
+        }
+        let params: [String: ParameterValue] = [
+            "lr": .double(0.01),
+            "layers": .int(4),
+            "opt": .string("adam"),
+            "fp16": .bool(true),
+        ]
+        let persisted = PersistedTrial(
+            number: 0, state: .complete, value: 1.0,
+            values: [1.0], params: params)
+        let trial = DistributedTrial(trialNumber: 0, params: params)
+
+        let carriers: [any ParamReadable] = [persisted, trial]
+        for carrier in carriers {
+            #expect(carrier.double("lr") == 0.01)
+            #expect(carrier.float("lr") == 0.01)
+            #expect(carrier.int("layers") == 4)
+            #expect(carrier.string("opt") == "adam")
+            #expect(carrier.bool("fp16") == true)
+            #expect(carrier.param("opt", as: Optimizer.self) == .adam)
+            #expect(carrier.double("missing") == nil)
+        }
+    }
+
+    @Test("Local and distributed trials reject the same NaN constraint")
+    func testValidationParity() async throws {
+        let study = try createStudy(name: "dist_parity_local")
+        var trial = try study.ask()
+        do {
+            try trial.setConstraint("bad", value: .nan)
+            Issue.record("Expected invalidArgument error")
+        } catch SwiftunaError.invalidArgument {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        try study.tell(consuming: trial, value: 1.0)
+
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_parity_remote") { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+        let remote = try await coordinator.ask()
+        do {
+            try await coordinator.tell(
+                DistributedTrialResult(
+                    trialNumber: remote.trialNumber, value: 1.0,
+                    constraints: ["bad": .nan]))
+            Issue.record("Expected invalidConstraint error")
+        } catch SwiftunaDistributedError.invalidConstraint {
+            // Expected: same input, distributed spelling of the same rule.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("DSL samples every distribution type through the shared path")
+    func testDSLAllDistributions() async throws {
+        let dsl = SearchSpaceParams([
+            .float(name: "lr", lower: 1e-4, upper: 1e-1, log: true),
+            .float(name: "dropout", lower: 0.0, upper: 0.5, step: 0.05),
+            .int(name: "layers", lower: 1, upper: 8, step: 2),
+            .categorical(name: "opt", choices: ["adam", "sgd"]),
+        ])
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_dsl_all") { [dsl] trial in
+            try dsl.sample(trial: &trial)
+        }
+
+        for _ in 0..<5 {
+            let trial = try await coordinator.ask()
+            let lr = trial.double("lr")!
+            #expect(lr >= 1e-4 && lr <= 1e-1)
+            #expect(trial.int("layers")! >= 1 && trial.int("layers")! <= 8)
+            #expect(trial.string("opt") == "adam" || trial.string("opt") == "sgd")
+            try await coordinator.tell(
+                DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
+        }
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 5)
+    }
 }
 
 extension AttributeKey where Value == String {
     static let distRegion = AttributeKey<String>("dist_region")
+}
+
+@Suite("Worker Loop Tests")
+struct WorkerLoopTests {
+    @Test("runWorker with fixed count matches drive state")
+    func testRunWorkerFixedCount() async throws {
+        let (coordinator, _) = try makeTestCoordinator(named: "dist_worker_fixed") { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        try await runWorker(coordinator: coordinator, nTrials: 5) { ctx in
+            let x = ctx.trial.double("x")!
+            return x * x
+        }
+
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 5)
+        #expect(try await coordinator.inFlightCount() == 0)
+    }
+
+    @Test("runWorker without count stops at exhaustion")
+    func testRunWorkerUntilExhausted() async throws {
+        let grid: [String: GridSampler.ValueList] = ["a": [0.0, 1.0]]
+        let (coordinator, _) = try makeTestCoordinator(
+            named: "dist_worker_open",
+            sampler: GridSampler(searchSpace: grid)
+        ) { trial in
+            let a = try trial.suggest("a", in: 0.0...1.0)
+            return ["a": .double(a)]
+        }
+
+        try await runWorker(coordinator: coordinator) { _ in 1.0 }
+
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 2)
+        #expect(try await coordinator.inFlightCount() == 0)
+    }
+
+    @Test("isRetryable is true only for capacity errors")
+    func testIsRetryable() {
+        #expect(SwiftunaDistributedError.tooManyInFlight(3).isRetryable)
+        #expect(!SwiftunaDistributedError.trialNotFound(0).isRetryable)
+        #expect(!SwiftunaDistributedError.trialAlreadyFinished(0).isRetryable)
+        #expect(!SwiftunaDistributedError.leaseExpired(0).isRetryable)
+        #expect(!SwiftunaDistributedError.searchSpaceExhausted.isRetryable)
+        #expect(!SwiftunaDistributedError.invalidConstraint("x").isRetryable)
+        #expect(!SwiftunaDistributedError.studyError("x").isRetryable)
+    }
+
+    @Test("Multi-objective optimize and runWorker record vectors")
+    func testMultiObjectiveDriver() async throws {
+        let (coordinator, _) = try makeTestCoordinator(
+            named: "dist_multi_driver",
+            directions: [.minimize, .maximize]
+        ) { trial in
+            let x = try trial.suggest("x", in: -5.0...5.0)
+            return ["x": .double(x)]
+        }
+
+        try await optimize(coordinator: coordinator, nTrials: 6, workers: 2) { ctx -> [Double] in
+            let x = ctx.trial.double("x")!
+            return [x * x, -x * x]
+        }
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 6)
+
+        try await runWorker(coordinator: coordinator, nTrials: 2) { ctx -> [Double] in
+            let x = ctx.trial.double("x")!
+            return [x * x, -x * x]
+        }
+        #expect(try await coordinator.finishedTrialsCount(where: [.complete]) == 8)
+        #expect(try await coordinator.bestTrials().count > 0)
+    }
 }

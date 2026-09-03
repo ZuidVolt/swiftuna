@@ -185,3 +185,28 @@ extension ParameterValue: Comparable {
         return lhs.description < rhs.description
     }
 }
+
+/// Uniform typed reading of hyperparameter values.
+///
+/// `PersistedTrial`, `DistributedTrial`, and any future carrier conform
+/// once, so readers behave identically everywhere instead of being
+/// reimplemented per carrier.
+public protocol ParamReadable {
+    /// Returns the 64-bit floating-point value for the parameter, if present.
+    func double(_ name: String) -> Double?
+
+    /// Returns the 32-bit floating-point value for the parameter, if present.
+    func float(_ name: String) -> Float?
+
+    /// Returns the integer value for the parameter, if present.
+    func int(_ name: String) -> Int?
+
+    /// Returns the string value for the parameter, if present.
+    func string(_ name: String) -> String?
+
+    /// Returns the boolean value for the parameter, if present.
+    func bool(_ name: String) -> Bool?
+
+    /// Deserializes a categorical parameter to a `RawRepresentable` enum.
+    func param<T: RawRepresentable>(_ name: String, as: T.Type) -> T? where T.RawValue == String
+}

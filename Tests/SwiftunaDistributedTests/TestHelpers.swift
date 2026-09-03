@@ -15,13 +15,13 @@ func makeTestCoordinator(
     pruner: any Pruner = NopPruner(),
     maxInFlight: Int = .max,
     leasePolicy: LeasePolicy? = nil,
-    sample: @escaping SearchSpace.SamplerClosure
+    sample: @escaping AskFunction.SamplerClosure
 ) throws -> (TestCoordinator, Study) {
     let study = try createStudy(
         name: "\(name)_\(UUID().uuidString)", directions: directions, pruner: pruner)
     let coordinator = TestCoordinator(
         study: study,
-        searchSpace: SearchSpace(sample),
+        askFunction: AskFunction(sample),
         actorSystem: LocalTestingDistributedActorSystem(),
         maxInFlight: maxInFlight,
         leasePolicy: leasePolicy)
@@ -35,7 +35,7 @@ func makeTestCoordinator<S: Sampler>(
     sampler: S,
     pruner: any Pruner = NopPruner(),
     maxInFlight: Int = .max,
-    sample: @escaping SearchSpace.SamplerClosure
+    sample: @escaping AskFunction.SamplerClosure
 ) throws -> (TestCoordinator, Study) {
     let study = try createStudy(
         name: "\(name)_\(UUID().uuidString)",
@@ -44,7 +44,7 @@ func makeTestCoordinator<S: Sampler>(
         pruner: pruner)
     let coordinator = TestCoordinator(
         study: study,
-        searchSpace: SearchSpace(sample),
+        askFunction: AskFunction(sample),
         actorSystem: LocalTestingDistributedActorSystem(),
         maxInFlight: maxInFlight)
     return (coordinator, study)

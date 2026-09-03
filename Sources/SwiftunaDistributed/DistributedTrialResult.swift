@@ -3,7 +3,7 @@ public import Swiftuna
 
 /// The evaluated result of a trial returned by a worker to the coordinator.
 public struct DistributedTrialResult: Sendable, Codable {
-    /// The trial number matching the requested ``DistributedTrialSpec/trialNumber``.
+    /// The trial number matching the requested ``DistributedTrial/trialNumber``.
     public let trialNumber: Int
 
     /// Evaluated objective value(s). Empty for pruned or failed trials.

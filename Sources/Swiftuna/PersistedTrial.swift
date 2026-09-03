@@ -22,6 +22,8 @@ public enum TrialState: Int32, Sendable, CaseIterable, Hashable, Codable {
 ///
 /// `PersistedTrial` captures all parameter suggestions, intermediate evaluations,
 /// user-defined metadata attributes, mathematical constraint values, and timestamps.
+/// Parameter readers additionally satisfy ``ParamReadable``, shared with
+/// `DistributedTrial`, so typed reads behave identically on both carriers.
 ///
 /// ### Example
 /// ```swift
@@ -303,6 +305,8 @@ public struct PersistedTrial: Sendable, Codable {
 }
 
 // MARK: - Sequence Operations
+
+extension PersistedTrial: ParamReadable {}
 
 extension Sequence where Element == PersistedTrial {
     /// Filters trials to only those with ``TrialState/complete`` state and valid objective value(s).

@@ -9,7 +9,7 @@ public import Swiftuna
 ///
 /// ```swift
 /// let ctx = try await DistributedTrialContext.checkout(from: coordinator)
-/// let x = ctx.spec.double("x") ?? 0.0
+/// let x = ctx.trial.double("x") ?? 0.0
 /// for epoch in 1...3 {
 ///     if try await ctx.report(step: epoch, value: x * x) {
 ///         try await ctx.prune()
@@ -25,28 +25,36 @@ public import Swiftuna
 /// `Codable` requirement.
 public struct DistributedTrialContext<ActorSystem>: Sendable
 where ActorSystem: DistributedActorSystem<any Codable> {
-    /// The checked-out trial specification.
-    public let spec: DistributedTrialSpec
+    /// The checked-out trial.
+    public let trial: DistributedTrial
 
     private let coordinator: StudyCoordinator<ActorSystem>
 
     /// The checked-out trial number.
-    public var trialNumber: Int { spec.trialNumber }
+    public var trialNumber: Int { trial.trialNumber }
 
-    public init(spec: DistributedTrialSpec, coordinator: StudyCoordinator<ActorSystem>) {
-        self.spec = spec
+    public init(trial: DistributedTrial, coordinator: StudyCoordinator<ActorSystem>) {
+        self.trial = trial
         self.coordinator = coordinator
     }
 
     /// Checks out the next trial from `coordinator` wrapped in a context.
     public static func checkout(from coordinator: StudyCoordinator<ActorSystem>) async throws -> Self {
-        Self(spec: try await coordinator.ask(), coordinator: coordinator)
+        Self(trial: try await coordinator.ask(), coordinator: coordinator)
+    }
+
+    /// Checks out the next trial, waiting up to `timeout` for a free slot.
+    public static func checkout(
+        from coordinator: StudyCoordinator<ActorSystem>,
+        waitingUpTo timeout: Duration
+    ) async throws -> Self {
+        Self(trial: try await coordinator.ask(waitingUpTo: timeout), coordinator: coordinator)
     }
 
     /// Reports an intermediate value. Returns `true` if the pruner recommends stopping.
     @discardableResult
     public func report(step: Int, value: Double) async throws -> Bool {
-        try await coordinator.report(trialNumber: spec.trialNumber, step: step, value: value)
+        try await coordinator.report(trialNumber: trial.trialNumber, step: step, value: value)
     }
 
     /// Records the final outcome with a prebuilt result.
@@ -62,7 +70,7 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     ) async throws {
         try await tell(
             DistributedTrialResult(
-                trialNumber: spec.trialNumber,
+                trialNumber: trial.trialNumber,
                 value: value,
                 constraintPairs: constraintPairs,
                 userAttrPairs: userAttrPairs
@@ -71,11 +79,11 @@ where ActorSystem: DistributedActorSystem<any Codable> {
 
     /// Records the trial as pruned.
     public func prune() async throws {
-        try await tell(.pruned(trialNumber: spec.trialNumber))
+        try await tell(.pruned(trialNumber: trial.trialNumber))
     }
 
     /// Records the trial as failed.
     public func fail() async throws {
-        try await tell(.failed(trialNumber: spec.trialNumber))
+        try await tell(.failed(trialNumber: trial.trialNumber))
     }
 }
