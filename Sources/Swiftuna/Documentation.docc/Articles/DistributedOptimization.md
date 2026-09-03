@@ -102,7 +102,7 @@ Report evaluates the pruner remotely and hands back a vote. The worker still dec
 
 Worker loops that hit a dead end should consult `isRetryable` on the error: only capacity errors reward the same call again, everything else needs a different call.
 
-A few rules worth memorizing. A failed tell keeps the trial in flight, so fix the payload and retry the same tell instead of asking for a new trial. Reporting one step twice keeps the latest value. Constraint values are validated before anything reaches storage: NaN throws `invalidConstraint` and leaves the trial in flight for a corrected retry, mirroring the local `Trial` rules. A repeated tell for a finished trial throws `trialAlreadyFinished`, so workers can tell a retry from a genuinely missing trial. Unknown numbers still throw `trialNotFound`.
+A few rules worth memorizing. A failed tell keeps the trial in flight, so fix the payload and retry the same tell instead of asking for a new trial. That includes a vector-length mismatch, which throws `objectiveCountMismatch` with expected and actual counts instead of dying inside the engine. Reporting one step twice keeps the latest value. Constraint values are validated before anything reaches storage: NaN throws `invalidConstraint` and leaves the trial in flight for a corrected retry, mirroring the local `Trial` rules. A repeated tell for a finished trial throws `trialAlreadyFinished`, so workers can tell a retry from a genuinely missing trial. Unknown numbers still throw `trialNotFound`.
 
 ## Part 3: run the fleet without babysitting it
 
@@ -136,11 +136,13 @@ let coordinator = StudyCoordinator(
 
 Leave the policy nil and behavior is exactly what it was before leases existed. When a lease lapses, the trial is recorded as failed with whatever intermediates it reported, its slot frees, and a stale tell for it throws `leaseExpired` with the trial number. Retired numbers are remembered approximately past a few thousand entries, so very old duplicates may degrade to `trialNotFound`. That bound only affects error specificity, never trial data.
 
+A note on the defaults: leases off and no cap is the library refusing to supervise your deployment for you. A cluster with membership watchdogs or an XPC service with its own lifecycle already watches workers, and a second timer here would double-supervise and double-expire. No policy means no protection, and that is deliberate rather than unfinished.
+
 Monitor with `inFlightCount`, `finishedTrialsCount` for every terminal state or filtered by state (pass `[.complete]` for completions only), and the read methods from Part 1.
 
-## Part 4: deploy over WebSockets
+## Part 4: deploy on your transport
 
-Nothing above this point touched the network, and that is the point. The coordinator, the driver, the worker loop, leases, and caps are all transport-agnostic. Deploying means hosting the coordinator on a socket and pointing workers at it. The recipe below uses WebSocketActors 1.x and only its public surface, verified with a live round trip in the demo harness. Any `DistributedActorSystem` with `Codable` messages slots into the same shape.
+Nothing above this point touched the network, and that is the point. The coordinator, the driver, the worker loop, leases, and caps are transport-agnostic: `optimize` and `runWorker` only ever call `ask`, `report`, and `tell`, so they run unchanged against any `DistributedActorSystem` with `Codable` messages. Deploying on a transport means exactly three things, and all three belong to the transport, never to this package: construct and configure the actor system, host the coordinator on it, and get the coordinator's id to the workers for `resolve`. The WebSocketActors recipe below is one worked example of those three steps, verified with a live round trip in the demo harness.
 
 Host the coordinator. Constructing it auto-registers the actor with the system, so read back its assigned id and share that id with workers through config or service discovery.
 

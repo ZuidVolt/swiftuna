@@ -149,10 +149,17 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
     /// worker can retry the same `tell` with corrected values.
     ///
     /// - Throws: ``SwiftunaDistributedError/invalidConstraint(_:)`` when a
-    ///   constraint value is NaN (mirroring ``Trial/setConstraint(_:value:)``).
+    ///   constraint value is NaN (mirroring ``Trial/setConstraint(_:value:)``),
+    ///   or ``SwiftunaDistributedError/objectiveCountMismatch(expected:got:)``
+    ///   when a completed trial's values do not match the study's directions.
     public distributed func tell(_ result: DistributedTrialResult) throws {
         guard let active = inFlight[result.trialNumber] else {
             throw terminalError(for: result.trialNumber)
+        }
+
+        if result.state == .complete, result.values.count != study.directions.count {
+            throw SwiftunaDistributedError.objectiveCountMismatch(
+                expected: study.directions.count, got: result.values.count)
         }
 
         for (name, value) in result.constraints {

@@ -8,6 +8,7 @@ public enum SwiftunaDistributedError: Error, Sendable, Codable, CustomStringConv
     case searchSpaceExhausted
     case tooManyInFlight(Int)
     case invalidConstraint(String)
+    case objectiveCountMismatch(expected: Int, got: Int)
     case studyError(String)
 
     public var description: String {
@@ -18,6 +19,8 @@ public enum SwiftunaDistributedError: Error, Sendable, Codable, CustomStringConv
         case .searchSpaceExhausted: return "Search space exhausted: no untried configurations remain"
         case .tooManyInFlight(let count): return "Too many in-flight trials (\(count)): coordinator is at capacity"
         case .invalidConstraint(let msg): return "Invalid constraint: \(msg)"
+        case .objectiveCountMismatch(let expected, let got):
+            return "Expected \(expected) objective value(s), got \(got)"
         case .studyError(let msg): return "Study error: \(msg)"
         }
     }
@@ -32,7 +35,7 @@ public enum SwiftunaDistributedError: Error, Sendable, Codable, CustomStringConv
         switch self {
         case .tooManyInFlight: return true
         case .trialNotFound, .trialAlreadyFinished, .leaseExpired,
-            .searchSpaceExhausted, .invalidConstraint, .studyError:
+            .searchSpaceExhausted, .invalidConstraint, .objectiveCountMismatch, .studyError:
             return false
         }
     }

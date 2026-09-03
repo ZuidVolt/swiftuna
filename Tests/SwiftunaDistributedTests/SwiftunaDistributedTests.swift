@@ -167,13 +167,16 @@ struct SwiftunaDistributedTests {
 
         let trial = try await coordinator.ask()
 
-        // Wrong values count for a 2-direction study: must throw and retain the trial.
+        // Wrong values count for a 2-direction study: typed error, trial retained.
         do {
             try await coordinator.tell(
                 DistributedTrialResult(trialNumber: trial.trialNumber, value: 1.0))
             Issue.record("Expected tell with mismatched values count to throw")
+        } catch SwiftunaDistributedError.objectiveCountMismatch(let expected, let got) {
+            #expect(expected == 2)
+            #expect(got == 1)
         } catch {
-            // Expected.
+            Issue.record("Unexpected error: \(error)")
         }
         #expect(try await coordinator.inFlightCount() == 1)
         #expect(try await coordinator.finishedTrialsCount() == 0)
@@ -886,6 +889,7 @@ struct WorkerLoopTests {
         #expect(!SwiftunaDistributedError.leaseExpired(0).isRetryable)
         #expect(!SwiftunaDistributedError.searchSpaceExhausted.isRetryable)
         #expect(!SwiftunaDistributedError.invalidConstraint("x").isRetryable)
+        #expect(!SwiftunaDistributedError.objectiveCountMismatch(expected: 2, got: 1).isRetryable)
         #expect(!SwiftunaDistributedError.studyError("x").isRetryable)
     }
 
