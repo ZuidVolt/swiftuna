@@ -90,8 +90,8 @@ public struct DistributedTrialResult: Sendable, Codable {
     }
 
     /// Factory method for creating an early-pruned trial result.
-    public static func pruned(trialNumber: Int) -> DistributedTrialResult {
-        DistributedTrialResult(
+    public static func pruned(trialNumber: Int) -> Self {
+        Self(
             trialNumber: trialNumber,
             values: [],
             state: .pruned
@@ -99,8 +99,8 @@ public struct DistributedTrialResult: Sendable, Codable {
     }
 
     /// Factory method for creating a failed trial result.
-    public static func failed(trialNumber: Int) -> DistributedTrialResult {
-        DistributedTrialResult(
+    public static func failed(trialNumber: Int) -> Self {
+        Self(
             trialNumber: trialNumber,
             values: [],
             state: .fail

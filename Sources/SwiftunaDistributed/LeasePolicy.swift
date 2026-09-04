@@ -1,7 +1,7 @@
 import Foundation
 
 /// Cap for retired trial-number sets on the coordinator (see `retire`).
-let retiredNumberCap = 4096
+let retiredNumberCap = 4_096
 
 /// Policy governing trial leases on the coordinator.
 ///

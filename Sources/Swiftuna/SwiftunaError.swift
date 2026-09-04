@@ -128,9 +128,8 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
             }
             let effectiveCode = code != 0 ? code : fallbackCode
             return from(code: effectiveCode, message: msg)
-        } else {
-            return from(code: fallbackCode, message: context)
         }
+        return from(code: fallbackCode, message: context)
     }
 
     public var description: String {

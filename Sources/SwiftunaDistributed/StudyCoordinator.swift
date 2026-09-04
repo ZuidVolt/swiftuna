@@ -1,7 +1,7 @@
 public import Distributed
 import Foundation
-public import Swiftuna
 internal import LibRustuna
+public import Swiftuna
 
 /// A distributed actor that coordinates hyperparameter optimization across remote workers.
 ///
@@ -272,7 +272,7 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
         try wrap { try study.trials }
     }
 
-    /// Returns trials filtered by lifecycle state.
+    /// Returns trials filtered by life cycle state.
     public distributed func trials(where states: Set<TrialState>) throws -> [PersistedTrial] {
         try wrap { try study.trials(where: states) }
     }

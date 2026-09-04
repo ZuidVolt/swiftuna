@@ -1,6 +1,6 @@
 import Foundation
-import Swiftuna
 internal import LibRustuna
+import Swiftuna
 
 /// An owned Rustuna trial handle. Noncopyable so the handle has exactly one
 /// owner; `take()` moves it out, and whatever remains is freed in `deinit`.

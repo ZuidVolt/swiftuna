@@ -128,7 +128,7 @@ public func runWorker<ActorSystem>(
 /// Checks out, evaluates, and records a single trial.
 private func runOneTrial<ActorSystem>(
     coordinator: StudyCoordinator<ActorSystem>,
-    objective: @Sendable @escaping (borrowing DistributedTrialContext<ActorSystem>) async throws -> [Double]
+    objective: @Sendable (borrowing DistributedTrialContext<ActorSystem>) async throws -> [Double]
 ) async throws where ActorSystem: DistributedActorSystem<any Codable> {
     let ctx = try await DistributedTrialContext.checkout(from: coordinator)
     do {

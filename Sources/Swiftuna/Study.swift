@@ -627,10 +627,11 @@ public final class Study: @unchecked Sendable {
 
         let len = strlen(cJson)
         let data = Data(bytesNoCopy: cJson, count: len, deallocator: .none)
-        return (try? Self.trialDecoder.decode(PersistedTrial.self, from: data)) ?? PersistedTrial(
-            number: 0, state: .fail, value: nil, values: [],
-            params: [:], internalParams: [:], userAttrs: [:]
-        )
+        return (try? Self.trialDecoder.decode(PersistedTrial.self, from: data))
+            ?? PersistedTrial(
+                number: 0, state: .fail, value: nil, values: [],
+                params: [:], internalParams: [:], userAttrs: [:]
+            )
     }
 
     // MARK: - Study User Attributes & Analytics

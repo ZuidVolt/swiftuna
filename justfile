@@ -16,10 +16,10 @@ build-release: build-ffi-release
     swift build -c release
 
 test:
-    swift test
+    swift test --quiet
 
 test-ffi:
-    cargo test --manifest-path crates/rustuna-ffi/Cargo.toml
+    cargo test --manifest-path crates/rustuna-ffi/Cargo.toml --quiet
 
 test-all: test-ffi test
 
