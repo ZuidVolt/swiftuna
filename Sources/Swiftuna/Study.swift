@@ -87,9 +87,15 @@ public final class Study: @unchecked Sendable {
     /// Synchronizes and formats the underlying SQLite database for full compatibility
     /// with `optuna-dashboard` and Python Optuna.
     public func syncWithOptunaDashboard() {
-        if case .sqlite(let path) = storage {
-            StorageBackend.syncWithOptunaDashboard(at: path)
-        }
+        guard case .sqlite(let path) = storage else { return }
+        // Formatting the database can take milliseconds: worth one span when
+        // instrumented, invisible otherwise.
+        let span = SwiftunaTelemetry.shared.span(
+            name: "swiftuna.dashboard_sync",
+            attributes: ["study.name": .string(name)]
+        )
+        StorageBackend.syncWithOptunaDashboard(at: path)
+        span?.end(status: .ok)
     }
 
     deinit {
@@ -267,10 +273,22 @@ public final class Study: @unchecked Sendable {
             var activeTrial = trial
             let trialNum = activeTrial.number
             let startTime = clock.now
-            let span = SwiftunaTelemetry.shared.tracer.startSpan(
+            // One call guards every allocation below: the tracer lock, the
+            // attribute dict, and the trial span all stay dead on the
+            // disabled path.
+            let span = SwiftunaTelemetry.shared.span(
                 name: "swiftuna.trial",
-                attributes: ["study.name": name, "trial.number": String(trialNum)]
+                attributes: [
+                    "study.name": .string(name),
+                    "trial.number": .int(trialNum),
+                    // Explicit false, never absent: backend queries filter on
+                    // this key, and absence must not mean anything.
+                    "trial.distributed": .bool(false),
+                ]
             )
+            // Threads the ambient span into the trial so `report` heartbeats
+            // and pruner votes land on it as events.
+            activeTrial.telemetrySpan = span
 
             let evalResult: Result<[Double], SwiftunaError>
             do {
@@ -281,22 +299,32 @@ public final class Study: @unchecked Sendable {
             }
 
             let elapsed = clock.now - startTime
+            // Sampled hyperparameters on every terminal path: pruned and
+            // failed trials map the search space just as much as completed
+            // ones. Behind the same `span?` chain, so nothing new runs
+            // when uninstrumented.
+            for (paramName, paramValue) in activeTrial.suggestedParams {
+                span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
+            }
             switch evalResult {
             case .success(let vals):
-                span.setAttribute("trial.status", value: "complete")
-                span.setAttribute(
-                    "trial.duration_ms", value: String(format: "%.2f", Double(elapsed.components.attoseconds) / 1e15))
-                span.end(status: .ok)
+                span?.setAttribute("trial.status", value: "complete")
+                // Raw double, never formatted: String(format:) follows the
+                // device locale and must not touch telemetry.
+                span?.setAttribute(
+                    "trial.duration_ms",
+                    value: .double(Double(elapsed.components.attoseconds) / 1e15))
+                span?.end(status: .ok)
                 try tell(consuming: activeTrial, values: vals, state: .complete)
             case .failure(let err):
                 switch err {
                 case .trialPruned:
-                    span.setAttribute("trial.status", value: "pruned")
-                    span.end(status: .ok)
+                    span?.setAttribute("trial.status", value: "pruned")
+                    span?.end(status: .ok)
                     try tell(consuming: activeTrial, values: [], state: .pruned)
                 default:
-                    span.setAttribute("trial.status", value: "failed")
-                    span.end(status: .error(err.description))
+                    span?.setAttribute("trial.status", value: "failed")
+                    span?.end(status: .error(err.description))
                     try tell(consuming: activeTrial, values: [], state: .fail)
                     throw err
                 }

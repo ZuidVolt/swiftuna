@@ -24,6 +24,30 @@ public struct Trial: ~Copyable {
     public let number: Int
     internal weak var studyRef: Study?
 
+    /// Ambient trial span attached by ``Study/optimize(nTrials:timeout:objective:)-3gyl5``.
+    ///
+    /// `nil` for manual ask/tell trials and whenever no tracer is registered,
+    /// so `report`/`shouldPrune` pay a single nil check on the disabled path.
+    internal var telemetrySpan: (any TelemetrySpan)? = nil
+
+    /// Sampled values by parameter name, recorded only while instrumented.
+    ///
+    /// Populated by the `suggest` overloads when an ambient span is attached
+    /// and emitted as `param.*` span attributes at completion. Empty
+    /// otherwise, so the disabled path pays one nil check per suggest and
+    /// nothing else.
+    internal var suggestedParams: [String: ParameterValue] = [:]
+
+    /// Records one sampled value for later `param.*` span attributes.
+    ///
+    /// Gated on the ambient span rather than the global flag: `optimize`
+    /// attaches the span exactly when instrumented, so presence already means
+    /// "someone is watching" with no extra atomic load on the suggest path.
+    private mutating func recordSuggested(name: String, value: ParameterValue) {
+        guard telemetrySpan != nil else { return }
+        suggestedParams[name] = value
+    }
+
     public struct IntermediateStep: Sendable {
         public let step: Int
         public let value: Double
@@ -104,6 +128,7 @@ public struct Trial: ~Copyable {
         if status != 0 {
             throw SwiftunaError.fromLastError(fallbackCode: status, context: "Float suggestion failed for '\(name)'")
         }
+        recordSuggested(name: name, value: .double(outVal))
         return outVal
     }
 
@@ -185,6 +210,7 @@ public struct Trial: ~Copyable {
         if status != 0 {
             throw SwiftunaError.fromLastError(fallbackCode: status, context: "Int suggestion failed for '\(name)'")
         }
+        recordSuggested(name: name, value: .int(Int(outVal)))
         return Int(outVal)
     }
 
@@ -239,7 +265,9 @@ public struct Trial: ~Copyable {
             throw SwiftunaError.fromLastError(
                 fallbackCode: status, context: "Categorical suggestion failed for '\(name)'")
         }
-        return choices[chosenIdx]
+        let chosen = choices[chosenIdx]
+        recordSuggested(name: name, value: ParameterValue(chosen))
+        return chosen
     }
 
     // MARK: - User Attributes
@@ -460,6 +488,10 @@ public struct Trial: ~Copyable {
         pruneIfWorse: Bool = false
     ) throws(SwiftunaError) {
         intermediateSteps.append(IntermediateStep(step: step, value: value))
+        telemetrySpan?.recordEvent(
+            name: "trial.report",
+            attributes: ["trial.step": .int(step), "trial.value": .double(value)]
+        )
 
         if pruneIfWorse {
             if try shouldPrune {
@@ -493,12 +525,25 @@ public struct Trial: ~Copyable {
         get throws(SwiftunaError) {
             guard let study = studyRef else { return false }
             guard let last = intermediateSteps.last else { return false }
-            return try study.pruner.shouldPrune(
+            // Pruner evaluation can fetch every trial over FFI: worth its own
+            // span when instrumented, one nil check when not.
+            let pruneSpan = telemetrySpan?.traceChild(
+                name: "swiftuna.pruner",
+                attributes: ["trial.number": .int(number), "trial.step": .int(last.step)]
+            )
+            let vote = try study.pruner.shouldPrune(
                 study: study,
                 trialNumber: number,
                 step: last.step,
                 currentValue: last.value
             )
+            pruneSpan?.setAttribute("trial.prune_vote", value: .bool(vote))
+            pruneSpan?.end(status: .ok)
+            telemetrySpan?.recordEvent(
+                name: "trial.prune_vote",
+                attributes: ["trial.step": .int(last.step), "trial.prune_vote": .bool(vote)]
+            )
+            return vote
         }
     }
 

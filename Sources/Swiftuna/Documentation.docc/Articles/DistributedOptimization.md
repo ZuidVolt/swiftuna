@@ -140,6 +140,10 @@ A note on the defaults: leases off and no cap is the library refusing to supervi
 
 Monitor with `inFlightCount`, `finishedTrialsCount` for every terminal state or filtered by state (pass `[.complete]` for completions only), and the read methods from Part 1.
 
+Telemetry needs no wiring: workers emit the same `swiftuna.trial` spans as local runs (report heartbeats become span events, sampled params ride as `param.*` attributes), and the coordinator adds lean sample/record spans plus lease-expiry events. Register a tracer per process with `SwiftunaTelemetry.shared.registerTracer` — the coordinator host and each worker configure their own. Unregistered processes pay nothing (one atomic check, zero allocations). See <doc:TelemetryAndObservability> for the span table and the OpenTelemetry bridge, whose mapping was verified end to end against the real SDK in September 2026 (worker-to-sample parentage, typed-attribute preservation, traceparent round-trip).
+
+A truthfulness note on worker spans: the span ends after the coordinator confirms the `tell`, so it records what the trial actually became. A throwing tell ends the span as failed rather than letting an intended `complete` stand. On error-blind transports a swallowed failure still reads `complete` — the transport limitation above, not a span bug.
+
 ## Part 4: deploy on your transport
 
 Nothing above this point touched the network, and that is the point. The coordinator, the driver, the worker loop, leases, and caps are transport-agnostic: `optimize` and `runWorker` only ever call `ask`, `report`, and `tell`, so they run unchanged against any `DistributedActorSystem` with `Codable` messages. Deploying on a transport means exactly three things, and all three belong to the transport, never to this package: construct and configure the actor system, host the coordinator on it, and get the coordinator's id to the workers for `resolve`. The WebSocketActors recipe below is one worked example of those three steps, verified with a live round trip in the demo harness.

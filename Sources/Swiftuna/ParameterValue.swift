@@ -59,10 +59,22 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
         }
     }
 
+    // MARK: - Telemetry
+
+    /// Maps this value to a typed span attribute, preserving numeric types
+    /// for backend aggregation instead of stringifying them.
+    public var telemetryAttribute: TelemetryAttribute {
+        switch self {
+        case .int(let i): return .int(i)
+        case .double(let d): return .double(d)
+        case .string(let s): return .string(s)
+        case .bool(let b): return .bool(b)
+        }
+    }
+
     // MARK: - CustomStringConvertible
 
-    public var description: String {
-        switch self {
+    public var description: String {        switch self {
         case .int(let i): return String(i)
         case .double(let d): return String(d)
         case .string(let s): return s
@@ -73,7 +85,9 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
     // MARK: - Initializer
 
     public init<T: Equatable>(_ value: T) {
-        if let i = value as? Int {
+        if let p = value as? ParameterValue {
+            self = p
+        } else if let i = value as? Int {
             self = .int(i)
         } else if let d = value as? Double {
             self = .double(d)

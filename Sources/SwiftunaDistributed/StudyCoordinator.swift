@@ -103,6 +103,10 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
 
     /// Samples one trial and tracks its handle. Callers own cap and reap checks.
     private func askNow() throws -> DistributedTrial {
+        let telemetry = SwiftunaTelemetry.shared.span(
+            name: "swiftuna.coordinator.sample",
+            attributes: ["study.name": .string(study.name)]
+        )
         do {
             var trial = try study.ask()
             let params = try askFunction.sample(trial: &trial)
@@ -111,10 +115,19 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
                 throw SwiftunaDistributedError.studyError("Failed to take handle for trial #\(trialNumber)")
             }
             inFlight[trialNumber] = InFlightTrial(rawHandle: handle, trialNumber: trialNumber)
-            return DistributedTrial(trialNumber: trialNumber, params: params)
+            telemetry?.setAttribute("trial.number", value: .int(trialNumber))
+            telemetry?.end(status: .ok)
+            return DistributedTrial(
+                trialNumber: trialNumber,
+                params: params,
+                studyName: study.name,
+                traceParent: telemetry?.traceParent
+            )
         } catch SwiftunaError.searchSpaceExhausted {
+            telemetry?.end(status: .error("search space exhausted"))
             throw SwiftunaDistributedError.searchSpaceExhausted
         } catch {
+            telemetry?.end(status: .error(String(describing: error)))
             throw SwiftunaDistributedError.studyError(String(describing: error))
         }
     }
@@ -153,6 +166,26 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
     ///   or ``SwiftunaDistributedError/objectiveCountMismatch(expected:got:)``
     ///   when a completed trial's values do not match the study's directions.
     public distributed func tell(_ result: DistributedTrialResult) throws {
+        let telemetry = SwiftunaTelemetry.shared.span(
+            name: "swiftuna.coordinator.record",
+            attributes: [
+                "study.name": .string(study.name),
+                "trial.number": .int(result.trialNumber),
+            ]
+        )
+        do {
+            try tellRecorded(result)
+        } catch {
+            // Recording failures end the span visibly: on error-blind
+            // transports this span is the only observable failure channel.
+            telemetry?.end(status: .error(String(describing: error)))
+            throw error
+        }
+        telemetry?.end(status: .ok)
+    }
+
+    /// Validates and durably records one trial outcome. See ``tell(_:)``.
+    private func tellRecorded(_ result: DistributedTrialResult) throws {
         guard let active = inFlight[result.trialNumber] else {
             throw terminalError(for: result.trialNumber)
         }
@@ -216,6 +249,7 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
     private func reapExpired(except: Int? = nil) {
         guard let policy = leasePolicy else { return }
         let now = ContinuousClock.now
+        var reaped: [Int] = []
         for (number, active) in inFlight
         where number != except && now - active.leasedAt > policy.timeout {
             try? study.tellRecorded(
@@ -230,6 +264,22 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
             }
             retire(number, as: .expired)
             finishedCounts[.fail, default: 0] += 1
+            reaped.append(number)
+        }
+        // One brief span per reap batch, one event per trial: lease expiry is
+        // rare, so this never fires on the steady-state hot path.
+        if !reaped.isEmpty, SwiftunaTelemetry.shared.isEnabled {
+            let span = SwiftunaTelemetry.shared.tracer.startSpan(
+                name: "swiftuna.coordinator.reap",
+                attributes: ["study.name": .string(study.name)]
+            )
+            for number in reaped {
+                span.recordEvent(
+                    name: "trial.lease_expired",
+                    attributes: ["trial.number": .int(number)]
+                )
+            }
+            span.end(status: .ok)
         }
     }
 

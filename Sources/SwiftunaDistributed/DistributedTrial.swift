@@ -16,10 +16,50 @@ public struct DistributedTrial: Sendable, Codable, Identifiable, Hashable, Param
     /// Dictionary of sampled hyperparameter values.
     public let params: [String: ParameterValue]
 
+    /// Name of the study that produced this trial, for span attributes.
+    ///
+    /// Lets worker-side `swiftuna.trial` spans emit `study.name` with dashboard
+    /// parity to local runs, without the worker ever touching the study.
+    public let studyName: String
+
+    /// W3C `traceparent` from the coordinator's sample span, if any.
+    ///
+    /// Opaque: forwarded untouched, never parsed. `nil` when the coordinator
+    /// runs uninstrumented or the backend has no context support.
+    public let traceParent: String?
+
     /// Creates a distributed trial.
-    public init(trialNumber: Int, params: [String: ParameterValue]) {
+    public init(
+        trialNumber: Int,
+        params: [String: ParameterValue],
+        studyName: String = "",
+        traceParent: String? = nil
+    ) {
         self.trialNumber = trialNumber
         self.params = params
+        self.studyName = studyName
+        self.traceParent = traceParent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case trialNumber, params, studyName, traceParent
+    }
+
+    /// Decodes older payloads that predate `studyName`/`traceParent`.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        trialNumber = try container.decode(Int.self, forKey: .trialNumber)
+        params = try container.decode([String: ParameterValue].self, forKey: .params)
+        studyName = try container.decodeIfPresent(String.self, forKey: .studyName) ?? ""
+        traceParent = try container.decodeIfPresent(String.self, forKey: .traceParent)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(trialNumber, forKey: .trialNumber)
+        try container.encode(params, forKey: .params)
+        try container.encode(studyName, forKey: .studyName)
+        try container.encodeIfPresent(traceParent, forKey: .traceParent)
     }
 
     /// Returns the 64-bit floating point value for the parameter, if present.
