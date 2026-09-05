@@ -118,7 +118,7 @@ Optimization budgets: at least one of `nTrials` or `timeout` is required (`timeo
 
 ```swift
 // Tree-structured Parzen Estimator (TPE, default)
-let tpe = TPESampler(seed: 42)
+let tpe = TPESampler(seed: 42, multivariate: nil, nStartupTrials: 10)
 
 // Quasi-Monte Carlo (QMC) Sobol sequence up to 1,024 dimensions
 let qmc = QMCSampler(seed: 123)
@@ -141,6 +141,27 @@ let searchSpace: [String: GridSampler.ValueList] = [
     "optimizer": .init(categorical: ["adam", "sgd"]),
 ]
 let grid = GridSampler(searchSpace: searchSpace, seed: 42)
+
+// Custom strategy in Swift: per-suggestion closures (mid-trial conditioning
+// included); unassigned kinds fall back to random inside Rustuna
+let custom = CallbackSampler(onFloat: { name, low, high, step, log, trialNumber in
+    Double.random(in: low...high)
+})
+
+// History-driven strategy: one method reads past trials, the driver fixes
+// the config ahead of ask (omitted params fall back to the study sampler)
+struct HillClimb: CustomSampler {
+    func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue] {
+        guard let bx = history.best?.params["x"]?.asDouble else {
+            return ["x": .double(Double.random(in: -10.0...10.0))]
+        }
+        return ["x": .double(bx + Double.random(in: -1.0...1.0))]
+    }
+}
+try study.optimize(nTrials: 50, using: HillClimb()) { trial in
+    let x = try trial.suggest("x", in: -10.0...10.0)
+    return x * x
+}
 ```
 
 `seed` is `UInt64?` on every sampler (`nil` = non-deterministic). Pass a sampler to `createStudy(sampler:)`; single-objective studies default to `TPESampler()`, multi-objective (`directions:`) studies default to `NSGAIISampler()`.
@@ -319,7 +340,7 @@ if case .success(let importances) = study.paramImportances(normalize: true, para
 
 ### Observability
 
-`Study` results include `bestTrial / bestValue / bestParams / bestInternalParams / bestFeasibleTrial / bestTrials / trials(where:)`. Per-trial tracing (`study.name`, `trial.number`, `trial.status`, `trial.duration_ms`) is emitted via `SwiftunaTelemetry.shared` and is zero-overhead with the default `NoOpTelemetryTracer` — register a custom `TelemetryTracer` to forward to OpenTelemetry/logging.
+`Study` results include `bestTrial / bestValue / bestParams / bestInternalParams / bestFeasibleTrial / bestTrials / trials(where:)` (pass `since:` with the known trial count for incremental refresh). Per-trial tracing (`study.name`, `trial.number`, `trial.status`, `trial.duration_ms`, sampled `param.*` with types intact) is emitted via `SwiftunaTelemetry.shared` and is zero-overhead with the default `NoOpTelemetryTracer` — register a custom `TelemetryTracer` to forward to OpenTelemetry/logging. Distributed workers emit the same spans, parented to the coordinator's trace.
 
 ---
 
@@ -330,6 +351,7 @@ Read the full documentation on [DocC](https://zuidvolt.github.io/swiftuna/docume
 - [Getting started](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/gettingstarted)
 - [Ask-and-tell guide](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/askandtellguide)
 - [Samplers and pruners](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/samplersandpruners)
+- [Custom samplers in Swift](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/customsamplers)
 - [Constrained and multi-objective optimization](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/constrainedoptimization)
 - [Storage backends and dashboard](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/storageanddashboard)
 - [Type-safe attributes](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/typesafeattributes)

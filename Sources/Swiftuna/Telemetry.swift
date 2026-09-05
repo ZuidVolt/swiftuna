@@ -298,6 +298,23 @@ public final class SwiftunaTelemetry: Sendable {
         return tracer.startSpan(name: name, attributes: attributes(), parent: parent)
     }
 
+    /// Opens a `swiftuna.trial` span with the canonical trial attributes.
+    ///
+    /// Single construction site for the local and custom-driver loops, so key
+    /// presence and types can never drift between them.
+    public func trialSpan(study studyName: String, trialNumber: Int, distributed: Bool) -> (any TelemetrySpan)? {
+        span(
+            name: "swiftuna.trial",
+            attributes: [
+                "study.name": .string(studyName),
+                "trial.number": .int(trialNumber),
+                // Explicit bool, never absent: backend queries filter on
+                // this key, and absence must not mean anything.
+                "trial.distributed": .bool(distributed),
+            ]
+        )
+    }
+
     /// The currently active tracer, or ``NoOpTelemetryTracer`` if none is registered.
     public var tracer: any TelemetryTracer {
         tracerState.withLock { $0 } ?? NoOpTelemetryTracer()

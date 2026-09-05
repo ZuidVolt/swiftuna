@@ -26,6 +26,10 @@ serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.6"
+# Path deps for upstream API-shape canary tests (tests/upstream_api_shape_tests.rs).
+# Same sources as [dependencies]; no network, no version skew by construction.
+rustuna_core = { path = "../../ref/rustuna/rustuna_core" }
+rustuna_sampler = { path = "../../ref/rustuna/rustuna_sampler", features = ["qmc"] }
 
 [profile.release]
 opt-level = 3

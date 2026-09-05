@@ -53,6 +53,7 @@ if let best = try study.bestTrial {
 - <doc:GettingStarted>
 - <doc:AskAndTellGuide>
 - <doc:SamplersAndPruners>
+- <doc:CustomSamplers>
 - <doc:ConstrainedOptimization>
 - <doc:StorageAndDashboard>
 - <doc:TypeSafeAttributes>
@@ -83,6 +84,9 @@ if let best = try study.bestTrial {
 - ``GridSampler``
 - ``NSGAIISampler``
 - ``RandomSampler``
+- ``CallbackSampler``
+- ``CustomSampler``
+- ``StudyHistory``
 
 ### Pruning and early stopping
 - ``Pruner``
@@ -109,6 +113,7 @@ if let best = try study.bestTrial {
 - ``SwiftunaTelemetry``
 - ``TelemetryTracer``
 - ``TelemetrySpan``
+- ``TelemetryAttribute``
 - ``SpanStatus``
 - ``NoOpTelemetryTracer``
 - ``NoOpTelemetrySpan``

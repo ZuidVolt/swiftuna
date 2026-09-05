@@ -19,6 +19,7 @@ Hyperparameter optimization pairs two distinct mechanisms:
 | ``GridSampler`` | Cartesian product grid | Small discrete spaces, ablation sweeps | Single only | No |
 | ``NSGAIISampler`` | Genetic evolutionary algorithm | Multi-objective Pareto frontier discovery | Yes (Native) | Constrained-domination |
 | ``RandomSampler`` | Uniform random search | Fast baseline, high-noise environments | Yes | No |
+| ``CallbackSampler`` | Swift closures called per suggestion | Custom strategies, conditional spaces | Yes | No (falls through to tell) |
 
 ---
 
@@ -83,6 +84,10 @@ let sampler = NSGAIISampler(
     seed: 42
 )
 ```
+
+### Custom samplers in Swift
+
+For strategies Rustuna doesn't ship, implement the suggestion in Swift: ``CallbackSampler`` for per-suggestion control (conditional spaces), ``CustomSampler`` for history-driven trial-start strategies, raw enqueue loops for one-off scripts. Full guide, Optuna/Rustuna comparison, and API boundaries: <doc:CustomSamplers>.
 
 ---
 
