@@ -8,7 +8,7 @@ Every sampler answers one question, what should the next trial try. Strategies d
 
 1. **``CallbackSampler``** answers per suggestion, inside the engine. Each closure fires at its own `suggest` call, conditioned on earlier params in the same trial. This is the choice for conditional search spaces.
 2. **``CustomSampler``** answers per trial, above the engine. One method reads history and returns the whole configuration before evaluation starts. This is the choice for history-driven strategies like hill-climbing, bandits, and Bayesian ideas of your own.
-3. **Raw enqueue driver loops** around ``Study/enqueue(_:userAttrs:)`` answer per trial with no protocol at all. This is the choice for one-off scripts.
+3. **Raw enqueue driver loops** around `Study.enqueue(_:userAttrs:)` answer per trial with no protocol at all. This is the choice for one-off scripts.
 
 Omitted params fall back to the study's Rust sampler in every pattern, so partial strategies work with no extra code.
 

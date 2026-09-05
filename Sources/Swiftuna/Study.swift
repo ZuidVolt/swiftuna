@@ -56,6 +56,16 @@ public final class Study: @unchecked Sendable {
     public let pruner: any Pruner
     public let storage: StorageBackend
 
+    /// Whether this study's sampler can upcall into Swift closures.
+    ///
+    /// Only ``CallbackSampler`` installs FFI callbacks, so only its studies
+    /// can ever set the reentrancy flag. Gating ``checkNotInCallback()`` on
+    /// this keeps the check off the hot path for every other sampler: one
+    /// predictable branch instead of a thread-dictionary lookup per `ask`.
+    /// `copy(to:as:)` inherits the flag because the Rust-side sampler (and
+    /// its live callback context) travels with the copied study.
+    private let mayInvokeSamplerCallbacks: Bool
+
     public var direction: Direction {
         directions.first ?? .minimize
     }
@@ -65,13 +75,15 @@ public final class Study: @unchecked Sendable {
         name: String,
         directions: [Direction],
         pruner: any Pruner = NopPruner(),
-        storage: StorageBackend = .inMemory
+        storage: StorageBackend = .inMemory,
+        mayInvokeSamplerCallbacks: Bool = false
     ) {
         self.raw = raw
         self.name = name
         self.directions = directions
         self.pruner = pruner
         self.storage = storage
+        self.mayInvokeSamplerCallbacks = mayInvokeSamplerCallbacks
     }
 
     internal convenience init(
@@ -160,7 +172,14 @@ public final class Study: @unchecked Sendable {
     ///
     /// A trial checked out mid-suggestion would leak unfinished and scramble
     /// queue pairing. One check shared by ``ask()`` and ``askEnqueued(_:)``.
+    // One check shared by ``ask()`` and ``askEnqueued(_:)``. Always-inline:
+    // after the flag guard the hot path must be a single predictable branch
+    // with no call overhead (measured: a call here costs ~15ns/ask).
+    @inline(__always)
     private func checkNotInCallback() throws(SwiftunaError) {
+        // Fast path first: studies without a callback sampler can never set
+        // the flag, so skip the thread-dictionary lookup entirely.
+        guard mayInvokeSamplerCallbacks else { return }
         if Thread.current.threadDictionary[samplerCallbackDepthKey] != nil {
             throw SwiftunaError.reentrantAsk(
                 "Cannot check out a trial from inside a sampler callback: the trial would leak unfinished and queue pairing would scramble.")
@@ -658,7 +677,8 @@ public final class Study: @unchecked Sendable {
             raw: outStudy,
             name: targetName,
             directions: directions,
-            storage: destination
+            storage: destination,
+            mayInvokeSamplerCallbacks: mayInvokeSamplerCallbacks
         )
     }
 

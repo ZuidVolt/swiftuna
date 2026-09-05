@@ -117,7 +117,7 @@ extension Study {
     ///
     /// Each iteration reads history (accumulated locally, O(1) amortized —
     /// no refetch), asks the sampler, atomically fixes and checks out the
-    /// trial (``askEnqueued(_:)``, safe across drivers sharing the study),
+    /// trial (`askEnqueued`, safe across drivers sharing the study),
     /// evaluates, and records. History params are exact: the sampler's fixed
     /// dict merged over everything the objective actually suggested
     /// (including Rust-sampled rest), so partial fixing stays truthful.
