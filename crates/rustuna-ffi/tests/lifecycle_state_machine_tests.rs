@@ -267,7 +267,7 @@ proptest! {
         // 2. Fetch batched JSON array
         let mut batch_json_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         let mut batch_len = 0usize;
-        prop_assert_eq!(rustuna_study_get_trials_json(study, mask, &mut batch_json_ptr, &mut batch_len), 0);
+        prop_assert_eq!(rustuna_study_get_trials_json_since(study, mask, 0, &mut batch_json_ptr, &mut batch_len), 0);
         prop_assert!(!batch_json_ptr.is_null());
 
         unsafe {

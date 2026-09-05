@@ -72,6 +72,45 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
         }
     }
 
+    // MARK: - AttributeConvertible bridge
+
+    /// Type-erased access to a ``ParameterValue`` boxed in an existential.
+    ///
+    /// `ParameterValue` deliberately does *not* conform to
+    /// `AttributeConvertible` (`fromAttributeString` would be lossy across
+    /// kinds), so this side-channel protocol recovers it without polluting
+    /// the public conversion surface.
+    internal protocol ParameterValueConvertible {
+        var asParameterValue: ParameterValue { get }
+    }
+
+    /// Converts a primitive attribute value exactly, or `nil` for exotic
+    /// types (custom `RawRepresentable`s, out-of-range integers) that need
+    /// the string form.
+    ///
+    /// Powers the automatic fast path: generic inputs that all convert take
+    /// the typed enqueue encoding with no JSON round trip.
+    public init?(exactly value: any AttributeConvertible) {
+        switch value {
+        case let v as any ParameterValueConvertible:
+            self = v.asParameterValue
+        case let v as Int:
+            self = .int(v)
+        case let v as Int64 where v >= Int64(Int.min) && v <= Int64(Int.max):
+            self = .int(Int(v))
+        case let v as Double:
+            self = .double(v)
+        case let v as Float:
+            self = .double(Double(v))
+        case let v as String:
+            self = .string(v)
+        case let v as Bool:
+            self = .bool(v)
+        default:
+            return nil
+        }
+    }
+
     // MARK: - CustomStringConvertible
 
     public var description: String {        switch self {
@@ -133,6 +172,10 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
 }
 
 // MARK: - ExpressibleBy Literals
+
+extension ParameterValue: ParameterValue.ParameterValueConvertible {
+    var asParameterValue: ParameterValue { self }
+}
 
 extension ParameterValue: ExpressibleByIntegerLiteral {
     public init(integerLiteral value: Int) {

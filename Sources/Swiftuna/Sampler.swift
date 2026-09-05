@@ -34,18 +34,37 @@ public struct TPESampler: Sampler {
     /// Optional seed for the pseudorandom number generator. If `nil`, a non-deterministic seed is generated.
     public let seed: UInt64?
 
+    /// Joint-sampling mode. `nil` (default) selects automatically, matching
+    /// Optuna: multivariate for single-objective studies, independent for
+    /// multi-objective studies.
+    public let multivariate: Bool?
+
+    /// Completed trials collected before TPE engages (earlier trials sample
+    /// randomly). Defaults to `10`, matching the engine.
+    public let nStartupTrials: Int
+
     /// Initializes a TPE sampler.
     ///
-    /// - Parameter seed: Seed for random number generation. If `nil`, a random seed is selected.
-    public init(seed: UInt64? = nil) {
+    /// - Parameters:
+    ///   - seed: Seed for random number generation. If `nil`, a random seed is selected.
+    ///   - multivariate: `nil` for automatic selection, `true` to force joint
+    ///     sampling, `false` to force independent sampling.
+    ///   - nStartupTrials: Completed trials before TPE engages. Defaults to `10`.
+    public init(seed: UInt64? = nil, multivariate: Bool? = nil, nStartupTrials: Int = 10) {
         self.seed = seed
+        self.multivariate = multivariate
+        self.nStartupTrials = nStartupTrials
     }
 
     public func makeRawHandle() -> OpaquePointer? {
+        // -1 auto, 0 independent, 1 joint.
+        let multivariateFlag = Int8(multivariate.map { $0 ? 1 : 0 } ?? -1)
+        // Negative counts would wrap as huge usize across the ABI.
+        let startup = max(0, nStartupTrials)
         if let s = seed {
-            return rustuna_sampler_tpe_new(s, true)
+            return rustuna_sampler_tpe_full(s, true, multivariateFlag, startup)
         }
-        return rustuna_sampler_tpe_new(0, false)
+        return rustuna_sampler_tpe_full(0, false, multivariateFlag, startup)
     }
 }
 

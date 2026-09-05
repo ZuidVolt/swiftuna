@@ -6,7 +6,7 @@ use std::ptr;
 #[test]
 fn test_tpe_sampler_determinism() {
     let run_optimization = |seed: u64| -> Vec<f64> {
-        let sampler = rustuna_sampler_tpe_new(seed, true);
+        let sampler = rustuna_sampler_tpe_full(seed, true, -1, 10);
         let name = CString::new("tpe_det").unwrap();
         let directions = [1i32]; // MINIMIZE
         let mut study: *mut RustunaStudy = ptr::null_mut();

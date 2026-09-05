@@ -33,18 +33,27 @@ public struct Trial: ~Copyable {
     /// Sampled values by parameter name, recorded only while instrumented.
     ///
     /// Populated by the `suggest` overloads when an ambient span is attached
-    /// and emitted as `param.*` span attributes at completion. Empty
-    /// otherwise, so the disabled path pays one nil check per suggest and
-    /// nothing else.
+    /// (telemetry) or `trackSuggestions` is set (custom-sampler drivers
+    /// building exact history), and emitted as `param.*` span attributes at
+    /// completion. Otherwise empty: the disabled path pays one nil check per
+    /// suggest and nothing else.
     internal var suggestedParams: [String: ParameterValue] = [:]
+
+    /// Records suggested values outside telemetry (custom-sampler drivers).
+    ///
+    /// Lets drivers build exact per-trial history — including Rust-sampled
+    /// params the fixed dict never saw — without a history refetch and
+    /// without coupling history to tracer registration.
+    internal var trackSuggestions = false
 
     /// Records one sampled value for later `param.*` span attributes.
     ///
-    /// Gated on the ambient span rather than the global flag: `optimize`
-    /// attaches the span exactly when instrumented, so presence already means
-    /// "someone is watching" with no extra atomic load on the suggest path.
+    /// Gated on observation, not on the global flag: an attached ambient
+    /// span (`optimize` only attaches one when instrumented) or an opted-in
+    /// driver (`trackSuggestions`) means someone is watching, with no atomic
+    /// load on the suggest path either way.
     private mutating func recordSuggested(name: String, value: ParameterValue) {
-        guard telemetrySpan != nil else { return }
+        guard telemetrySpan != nil || trackSuggestions else { return }
         suggestedParams[name] = value
     }
 
@@ -615,7 +624,11 @@ package func validateConstraint(name: String, value: Double) throws(SwiftunaErro
     }
 }
 
-private func withCStrings<R>(
+/// Calls `body` with a contiguous buffer of C string pointers, in order.
+///
+/// Shared by suggest paths (single strings) and the typed enqueue path
+/// (nested once per array; inner buffers stay alive inside the outer call).
+internal func withCStrings<R>(
     _ strings: [String],
     _ body: (UnsafeBufferPointer<UnsafePointer<CChar>?>) throws -> R
 ) rethrows -> R {

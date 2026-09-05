@@ -16,8 +16,8 @@ struct EnqueueAndImportancePropertyTests {
                 let study = try Swiftuna.createStudy(direction: .minimize)
 
                 try study.enqueue([
-                    "weight": targetWeight,
-                    "step": targetStep
+                    "weight": .double(targetWeight),
+                    "step": .int(targetStep)
                 ])
 
                 var trial = try study.ask()
@@ -43,7 +43,7 @@ struct EnqueueAndImportancePropertyTests {
                 let expectedValues = (0..<count).map { Double($0 * 10 + 3) }
 
                 for val in expectedValues {
-                    try study.enqueue(["param": val])
+                    try study.enqueue(["param": .double(val)])
                 }
 
                 for (idx, expectedVal) in expectedValues.enumerated() {

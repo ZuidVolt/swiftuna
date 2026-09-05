@@ -1,4 +1,5 @@
 import PropertyBased
+import Synchronization
 import Testing
 
 @testable import Swiftuna
@@ -188,9 +189,9 @@ struct EnqueueAndImportanceTests {
         // Pre-register baseline configuration using fluent chaining
         try study.enqueue(
             [
-                "weight": 1.5,
-                "min_comp": 8,
-                "mode": "fast",
+                "weight": .double(1.5),
+                "min_comp": .int(8),
+                "mode": .string("fast"),
             ], userAttrs: ["tag": "baseline"])
 
         // Ask for trial 0
@@ -217,6 +218,118 @@ struct EnqueueAndImportanceTests {
         #expect(trials.count == 2)
         #expect(trials[0].params["weight"] == 1.5)
         #expect(trials[0].params["min_comp"] == 8.0)
+    }
+
+    @Test("Typed enqueue fixes parameters without JSON round trip")
+    func testTypedEnqueue() throws {
+        let study = try Swiftuna.createStudy(name: "typed_enqueue_test", sampler: TPESampler(seed: 42))
+
+        try study.enqueue(
+            [
+                "weight": .double(1.5),
+                "min_comp": .int(8),
+                "mode": .string("fast"),
+                "flag": .bool(true),
+            ], userAttrs: ["tag": "typed"])
+
+        var trial0 = try study.ask()
+        #expect(trial0.number == 0)
+
+        let w = try trial0.suggest("weight", in: 0.0...10.0)
+        let c = try trial0.suggest("min_comp", in: 1...20)
+        let m = try trial0.suggest("mode", choices: ["fast", "precise"])
+
+        #expect(w == 1.5)
+        #expect(c == 8)
+        #expect(m == "fast")
+
+        try study.tell(consuming: trial0, value: w * Double(c))
+
+        let trials = try study.trials
+        #expect(trials.count == 1)
+        #expect(trials[0].params["weight"] == 1.5)
+        #expect(trials[0].params["min_comp"] == 8.0)
+        #expect(trials[0].params["mode"] == "fast")
+    }
+
+    @Test("Callback sampler suggests through Swift closures")
+    func testCallbackSampler() throws {
+        let seenTrials = Mutex<[Int]>([])
+        let sampler = CallbackSampler(
+            onFloat: { _, low, high, _, _, trialNumber in
+                seenTrials.withLock { $0.append(trialNumber) }
+                return (low + high) / 2
+            },
+            onInt: { _, low, high, _, _, _ in (low + high) / 2 },
+            onCategorical: { _, choices, _ in choices.count - 1 }
+        )
+        let study = try Swiftuna.createStudy(name: "callback_test", sampler: sampler)
+
+        var trial = try study.ask()
+        let x = try trial.suggest("x", in: 0.0...10.0)
+        #expect(x == 5.0)
+        let n = try trial.suggest("n", in: 1...10)
+        #expect(n == 5)
+        let c = try trial.suggest("arch", choices: ["resnet", "vit", "mlp"])
+        #expect(c == "mlp")
+
+        try study.tell(consuming: trial, value: x)
+        #expect(try study.trials.count == 1)
+        // The upcall carried trial identity: first trial in study is number 0.
+        #expect(seenTrials.withLock { $0 } == [0])
+    }
+
+    @Test("Natural enqueue syntax resolves without verbosity or ambiguity")
+    func testEnqueueNaturalSyntax() throws {
+        let study = try Swiftuna.createStudy(name: "natural_enqueue_test", sampler: TPESampler(seed: 42))
+
+        // Heterogeneous literals: must pick an overload without ambiguity.
+        try study.enqueue(["lr": 0.01, "hidden_dim": 32])
+        // Variables (not literals): generic overload auto-upgrades to typed.
+        // UInt64 has no exact conversion: exercises the JSON fallback.
+        let w = 1.5
+        let n = 8
+        let m = "fast"
+        let big = UInt64(42)
+        try study.enqueue(["weight": w, "min_comp": n, "mode": m, "big": big])
+
+        var t0 = try study.ask()
+        #expect(try t0.suggest("lr", in: 0.0...1.0) == 0.01)
+        #expect(try t0.suggest("hidden_dim", in: 1...64) == 32)
+        try study.tell(consuming: t0, value: 1.0)
+
+        var t1 = try study.ask()
+        #expect(try t1.suggest("weight", in: 0.0...10.0) == 1.5)
+        #expect(try t1.suggest("min_comp", in: 1...20) == 8)
+        #expect(try t1.suggest("mode", choices: ["fast", "precise"]) == "fast")
+        #expect(try t1.suggest("big", in: 1...100) == 42)
+        try study.tell(consuming: t1, value: 1.0)
+    }
+
+    @Test("TPE sampler exposes multivariate and startup-trial configuration")
+    func testTPESamplerConfig() throws {
+        for multivariate in [nil, false, true] as [Bool?] {
+            let study = try Swiftuna.createStudy(
+                name: "tpe_config_\(String(describing: multivariate))",
+                sampler: TPESampler(seed: 42, multivariate: multivariate, nStartupTrials: 3))
+            try study.optimize(nTrials: 5) { trial in
+                let x = try trial.suggest("x", in: -5.0...5.0)
+                return x * x
+            }
+            #expect(try study.trials.count == 5)
+        }
+        // Seeded determinism through the full-config constructor.
+        func run(_ tag: String) throws -> [Double] {
+            let study = try Swiftuna.createStudy(
+                name: "tpe_determinism_\(tag)",
+                sampler: TPESampler(seed: 7, multivariate: true, nStartupTrials: 2))
+            try study.optimize(nTrials: 6) { trial in
+                let x = try trial.suggest("x", in: -5.0...5.0)
+                return x * x
+            }
+            return try study.trials.map { $0.values.first ?? .nan }
+        }
+        #expect(try run("a") == run("b"))
     }
 
     @Test("PED-ANOVA hyperparameter importance evaluation on anisotropic landscape")
@@ -296,7 +409,7 @@ struct EnqueueAndImportanceTests {
         let study = try Swiftuna.createStudy(name: "partial_enqueue_test", sampler: TPESampler(seed: 42))
 
         // Only fix "fixed_param", leave "sampled_param" unspecified
-        try study.enqueue(["fixed_param": 99.0])
+        try study.enqueue(["fixed_param": .double(99.0)])
 
         var trial = try study.ask()
         let fixed = try trial.suggest("fixed_param", in: 0.0...100.0)

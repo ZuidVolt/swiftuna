@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, RwLock};
 
@@ -18,7 +18,7 @@ use rustuna_core::study::{
 use rustuna_core::trial::{PersistedTrial, Trial, TrialStateValues};
 use rustuna_sampler::nsgaii::NSGAIISampler;
 use rustuna_sampler::qmc::QmcSampler;
-use rustuna_sampler::tpe::TpeSampler;
+use rustuna_sampler::tpe::{TpeConfig, TpeSampler};
 use rustuna_storage::cache::CachedStorage;
 use rustuna_storage::journal::file::JournalFileBackend;
 use rustuna_storage::journal::storage::JournalStorage;
@@ -126,14 +126,32 @@ pub struct RustunaSampler {
     pub inner: Arc<dyn Sampler>,
 }
 
+/// Full TPE configuration. `multivariate`: negative selects automatically
+/// (multivariate for single-objective, independent for multi-objective,
+/// matching Optuna), `0` forces independent sampling, positive forces joint
+/// sampling. `n_startup_trials` completed trials run randomly before TPE
+/// engages; `0` keeps the engine default (10).
 #[unsafe(no_mangle)]
-pub extern "C" fn rustuna_sampler_tpe_new(seed: u64, has_seed: bool) -> *mut RustunaSampler {
+pub extern "C" fn rustuna_sampler_tpe_full(
+    seed: u64,
+    has_seed: bool,
+    multivariate: i8,
+    n_startup_trials: usize,
+) -> *mut RustunaSampler {
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let sampler = if has_seed {
-            TpeSampler::seed_from_u64(seed)
-        } else {
-            TpeSampler::new()
-        };
+        let sampler = TpeSampler::from_config(TpeConfig {
+            multivariate: if multivariate < 0 {
+                None
+            } else {
+                Some(multivariate > 0)
+            },
+            n_startup_trials: if n_startup_trials > 0 {
+                n_startup_trials
+            } else {
+                TpeConfig::default().n_startup_trials
+            },
+            seed: if has_seed { Some(seed) } else { None },
+        });
         Box::into_raw(Box::new(RustunaSampler {
             inner: Arc::new(sampler),
         }))
@@ -683,6 +701,43 @@ pub extern "C" fn rustuna_study_get_user_attr(
     }
 }
 
+/// Parses the optional user-attrs JSON object into storage attrs.
+///
+/// Shared by the JSON and typed enqueue paths. Returns `Err(code)` with the
+/// last error already set on malformed input.
+fn parse_user_attrs_json(
+    user_attrs_json: *const c_char,
+) -> Result<Option<rustuna_core::attr::Attrs>, i32> {
+    if user_attrs_json.is_null() {
+        return Ok(None);
+    }
+    let uaj_str = match unsafe { CStr::from_ptr(user_attrs_json) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            return Err(set_last_error(
+                -1,
+                "user_attrs_json is not valid UTF-8".to_string(),
+            ));
+        }
+    };
+    if uaj_str.trim().is_empty() || uaj_str == "{}" {
+        return Ok(None);
+    }
+    match serde_json::from_str::<HashMap<String, String>>(uaj_str) {
+        Ok(map) => {
+            let mut attrs = rustuna_core::attr::Attrs::new();
+            for (k, v) in map {
+                attrs.insert(rustuna_core::attr::AttrKey::User(k.into()), v);
+            }
+            Ok(Some(attrs))
+        }
+        Err(e) => Err(set_last_error(
+            19,
+            format!("Failed to parse user_attrs_json: {e:?}"),
+        )),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rustuna_study_enqueue_trial(
     study: *mut RustunaStudy,
@@ -739,33 +794,9 @@ pub extern "C" fn rustuna_study_enqueue_trial(
             fixed_params.insert(k.clone(), label);
         }
 
-        let user_attrs = if !user_attrs_json.is_null() {
-            let uaj_str = match unsafe { CStr::from_ptr(user_attrs_json) }.to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error(-1, "user_attrs_json is not valid UTF-8".to_string());
-                    return -1;
-                }
-            };
-            if !uaj_str.trim().is_empty() && uaj_str != "{}" {
-                match serde_json::from_str::<HashMap<String, String>>(uaj_str) {
-                    Ok(map) => {
-                        let mut attrs = rustuna_core::attr::Attrs::new();
-                        for (k, v) in map {
-                            attrs.insert(rustuna_core::attr::AttrKey::User(k.into()), v);
-                        }
-                        Some(attrs)
-                    }
-                    Err(e) => {
-                        set_last_error(19, format!("Failed to parse user_attrs_json: {e:?}"));
-                        return 19;
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
+        let user_attrs = match parse_user_attrs_json(user_attrs_json) {
+            Ok(attrs) => attrs,
+            Err(code) => return code,
         };
 
         match s.inner.enqueue_trial(fixed_params, user_attrs) {
@@ -777,6 +808,118 @@ pub extern "C" fn rustuna_study_enqueue_trial(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_study_enqueue_trial: {e:?}"));
+            -99
+        }
+    }
+}
+
+/// Parameter value kinds for [`rustuna_study_enqueue_typed`].
+///
+/// Values travel in `num_values` (`f64`) except strings, which travel in
+/// `str_values`. Integers must fit the `f64` mantissa exactly (true for all
+/// hyperparameter ranges); booleans encode as `0.0`/`1.0`.
+pub mod enqueue_kind {
+    /// Integer value; `num_values[i] as i64`.
+    pub const INT: u8 = 0;
+    /// Floating-point value; `num_values[i]`.
+    pub const DOUBLE: u8 = 1;
+    /// String value; `str_values[i]` (must be non-null).
+    pub const STRING: u8 = 2;
+    /// Boolean value; `num_values[i] != 0.0`.
+    pub const BOOL: u8 = 3;
+}
+
+/// Enqueues a trial with typed parameter arrays instead of JSON.
+///
+/// Same queue semantics as [`rustuna_study_enqueue_trial`] without the
+/// serialize/parse round trip on either side of the boundary: no JSON is
+/// produced or consumed for `params`. `user_attrs_json` keeps the JSON form
+/// (rarely set, never hot).
+///
+/// When `count` is zero the arrays are not touched (may be null) and an
+/// all-Rust-sampled trial is enqueued.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_enqueue_typed(
+    study: *mut RustunaStudy,
+    names: *const *const c_char,
+    kinds: *const u8,
+    num_values: *const f64,
+    str_values: *const *const c_char,
+    count: usize,
+    user_attrs_json: *const c_char,
+) -> i32 {
+    if study.is_null() {
+        set_last_error(-1, "study pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &*study };
+        let mut fixed_params = HashMap::new();
+        if count > 0 {
+            if names.is_null() || kinds.is_null() || num_values.is_null() || str_values.is_null() {
+                set_last_error(-1, "null params array with nonzero count".to_string());
+                return -1;
+            }
+            let names = unsafe { std::slice::from_raw_parts(names, count) };
+            let kinds = unsafe { std::slice::from_raw_parts(kinds, count) };
+            let num_values = unsafe { std::slice::from_raw_parts(num_values, count) };
+            let str_values = unsafe { std::slice::from_raw_parts(str_values, count) };
+            for i in 0..count {
+                if names[i].is_null() {
+                    set_last_error(-1, format!("param name {i} is null"));
+                    return -1;
+                }
+                let name = match unsafe { CStr::from_ptr(names[i]) }.to_str() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        set_last_error(-1, format!("param name {i} is not valid UTF-8"));
+                        return -1;
+                    }
+                };
+                let label = match kinds[i] {
+                    enqueue_kind::INT => {
+                        rustuna_core::attr::CategoryLabel::Int(num_values[i] as i64)
+                    }
+                    enqueue_kind::DOUBLE => rustuna_core::attr::CategoryLabel::Float(num_values[i]),
+                    enqueue_kind::STRING => {
+                        if str_values[i].is_null() {
+                            set_last_error(-1, format!("string value {i} is null"));
+                            return -1;
+                        }
+                        match unsafe { CStr::from_ptr(str_values[i]) }.to_str() {
+                            Ok(v) => rustuna_core::attr::CategoryLabel::String(v.to_string()),
+                            Err(_) => {
+                                set_last_error(-1, format!("string value {i} is not valid UTF-8"));
+                                return -1;
+                            }
+                        }
+                    }
+                    enqueue_kind::BOOL => {
+                        rustuna_core::attr::CategoryLabel::Bool(num_values[i] != 0.0)
+                    }
+                    k => {
+                        set_last_error(-1, format!("unknown param kind {k} at index {i}"));
+                        return -1;
+                    }
+                };
+                fixed_params.insert(name.to_string(), label);
+            }
+        }
+
+        let user_attrs = match parse_user_attrs_json(user_attrs_json) {
+            Ok(attrs) => attrs,
+            Err(code) => return code,
+        };
+
+        match s.inner.enqueue_trial(fixed_params, user_attrs) {
+            Ok(()) => 0,
+            Err(e) => set_rustuna_error(&e),
+        }
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_study_enqueue_typed: {e:?}"));
             -99
         }
     }
@@ -1569,12 +1712,18 @@ pub extern "C" fn rustuna_persisted_trial_get_json(
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rustuna_study_get_trials_json(
+/// Shared implementation for the trials-JSON fetchers.
+///
+/// `from_number` skips trials below a trial number *before* the expensive
+/// per-trial conversion (`make_persisted_trial` performs storage reads), so
+/// incremental refresh costs O(delta) instead of O(history).
+fn fetch_trials_json(
     study: *mut RustunaStudy,
     states_mask: u32,
+    from_number: u32,
     out_json: *mut *mut c_char,
     out_len: *mut usize,
+    fn_name: &'static str,
 ) -> i32 {
     if study.is_null() || out_json.is_null() {
         set_last_error(-1, "study or out_json pointer is null".to_string());
@@ -1599,6 +1748,7 @@ pub extern "C" fn rustuna_study_get_trials_json(
         let trials: Vec<RustunaPersistedTrial> = trials_vec
             .into_iter()
             .flatten()
+            .filter(|t| t.number >= from_number)
             .filter(|t| {
                 let state_bit = match t.state_values {
                     TrialStateValues::Running => 1 << 0,
@@ -1635,13 +1785,33 @@ pub extern "C" fn rustuna_study_get_trials_json(
     match res {
         Ok(code) => code,
         Err(e) => {
-            set_last_error(
-                -99,
-                format!("Panic in rustuna_study_get_trials_json: {e:?}"),
-            );
+            set_last_error(-99, format!("Panic in {fn_name}: {e:?}"));
             -99
         }
     }
+}
+
+/// Fetches trials at or above a trial number, filtered by state.
+///
+/// Drivers tracking `history.count` pass it as `from_number` and pay O(new)
+/// instead of O(history). Trials are numbered densely from 0, so
+/// `from_number == known_count` yields exactly the unseen tail.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_study_get_trials_json_since(
+    study: *mut RustunaStudy,
+    states_mask: u32,
+    from_number: u32,
+    out_json: *mut *mut c_char,
+    out_len: *mut usize,
+) -> i32 {
+    fetch_trials_json(
+        study,
+        states_mask,
+        from_number,
+        out_json,
+        out_len,
+        "rustuna_study_get_trials_json_since",
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -2390,6 +2560,269 @@ pub extern "C" fn rustuna_bench_e2e(
         Ok(code) => code,
         Err(e) => {
             set_last_error(-99, format!("Panic in rustuna_bench_e2e: {e:?}"));
+            -99
+        }
+    }
+}
+
+// MARK: - Callback sampler (Swift/custom-sampler upcalls)
+
+/// Suggest one float parameter. Returns 0 and sets `out_value` on success.
+/// `trial_number` identifies the trial being configured (matches the number
+/// reported at tell/finalization).
+pub type CallbackSuggestFloat = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    name: *const c_char,
+    low: f64,
+    high: f64,
+    step: f64,
+    log: bool,
+    trial_number: u32,
+    out_value: *mut f64,
+) -> i32;
+
+/// Suggest one integer parameter. Returns 0 and sets `out_value` on success.
+pub type CallbackSuggestInt = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    name: *const c_char,
+    low: i64,
+    high: i64,
+    step: i64,
+    log: bool,
+    trial_number: u32,
+    out_value: *mut i64,
+) -> i32;
+
+/// Suggest one categorical parameter. Returns 0 and sets `out_index` (must be
+/// below `choices_count`) on success. Choices arrive as strings.
+pub type CallbackSuggestCategorical = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    name: *const c_char,
+    choices: *const *const c_char,
+    choices_count: usize,
+    trial_number: u32,
+    out_index: *mut usize,
+) -> i32;
+
+/// Virtual table for a foreign (Swift) sampler.
+///
+/// Any callback may be null, in which case that distribution kind falls back
+/// to uniform random sampling. This gives partial fixing for free: custom
+/// floats with random categoricals, or vice versa.
+///
+/// Thread-safety contract: callbacks run synchronously on the optimizing
+/// thread and may run concurrently across threads. The foreign side must
+/// synchronize its own state; the table itself is never mutated after
+/// construction.
+#[repr(C)]
+pub struct CallbackSamplerVTable {
+    pub ctx: *mut c_void,
+    pub free_ctx: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub suggest_float: Option<CallbackSuggestFloat>,
+    pub suggest_int: Option<CallbackSuggestInt>,
+    pub suggest_categorical: Option<CallbackSuggestCategorical>,
+}
+
+struct CallbackSampler {
+    vtable: CallbackSamplerVTable,
+    fallback: RandomSampler,
+}
+
+// SAFETY: the vtable is immutable after construction; `ctx` validity and
+// interior synchronization are the foreign side's contract (documented above).
+unsafe impl Send for CallbackSampler {}
+unsafe impl Sync for CallbackSampler {}
+
+impl Drop for CallbackSampler {
+    fn drop(&mut self) {
+        if let Some(free) = self.vtable.free_ctx {
+            if !self.vtable.ctx.is_null() {
+                unsafe { free(self.vtable.ctx) };
+            }
+        }
+    }
+}
+
+/// Maps a nonzero callback return to a sampler error.
+fn check_callback(code: i32, name: &str, kind: &str) -> rustuna_core::Result<()> {
+    if code != 0 {
+        return Err(rustuna_core::Error::with_reason(
+            rustuna_core::ErrorKind::SamplerError,
+            format!("{kind} callback for {name:?} returned {code}"),
+        ));
+    }
+    Ok(())
+}
+
+impl rustuna_core::sampler::Sampler for CallbackSampler {
+    fn support_joint_sampling(&self) -> bool {
+        false
+    }
+
+    fn sample_independent(
+        &self,
+        ctx: &rustuna_core::sampler::Context,
+        storage: Arc<RwLock<dyn Storage>>,
+        name: &str,
+        distribution: &Distribution,
+    ) -> rustuna_core::Result<f64> {
+        let c_name = CString::new(name).map_err(|_| {
+            rustuna_core::Error::with_reason(
+                rustuna_core::ErrorKind::SamplerError,
+                format!("param name {name:?} contains a NUL byte"),
+            )
+        })?;
+        match distribution {
+            Distribution::Float { low, high, step, log } => {
+                match self.vtable.suggest_float {
+                    Some(cb) => {
+                        let mut out = 0.0f64;
+                        let code = unsafe {
+                            cb(
+                                self.vtable.ctx,
+                                c_name.as_ptr(),
+                                *low,
+                                *high,
+                                step.unwrap_or(0.0),
+                                *log,
+                                ctx.trial_number,
+                                &mut out,
+                            )
+                        };
+                        check_callback(code, name, "float")?;
+                        Ok(out)
+                    }
+                    None => self.fallback.sample_independent(ctx, storage, name, distribution),
+                }
+            }
+            Distribution::Int { low, high, step, log } => match self.vtable.suggest_int {
+                Some(cb) => {
+                    let mut out = 0i64;
+                    let code = unsafe {
+                        cb(
+                            self.vtable.ctx,
+                            c_name.as_ptr(),
+                            *low,
+                            *high,
+                            *step,
+                            *log,
+                            ctx.trial_number,
+                            &mut out,
+                        )
+                    };
+                    check_callback(code, name, "int")?;
+                    Ok(out as f64)
+                }
+                None => self.fallback.sample_independent(ctx, storage, name, distribution),
+            },
+            Distribution::Categorical { cardinality } => {
+                match self.vtable.suggest_categorical {
+                    Some(cb) => {
+                        let labels = {
+                            let mut guard = storage.write().map_err(|e| {
+                                rustuna_core::Error::with_reason(
+                                    rustuna_core::ErrorKind::StorageError,
+                                    format!("Storage lock poisoned: {e:?}"),
+                                )
+                            })?;
+                            guard
+                                .get_category_labels(ctx.study_id, name, *cardinality)
+                                .map_err(|e| {
+                                    rustuna_core::Error::with_reason(
+                                        rustuna_core::ErrorKind::StorageError,
+                                        format!("Failed to read category labels: {e:?}"),
+                                    )
+                                })?
+                        };
+                        let label_strs: Vec<String> = match labels {
+                            Some(ls) => ls.iter().map(|l| l.serialize()).collect(),
+                            None => (0..*cardinality).map(|i| i.to_string()).collect(),
+                        };
+                        let c_labels: Vec<CString> = label_strs
+                            .iter()
+                            .map(|s| CString::new(s.as_str()).unwrap_or_default())
+                            .collect();
+                        let ptrs: Vec<*const c_char> =
+                            c_labels.iter().map(|c| c.as_ptr()).collect();
+                        let mut out = 0usize;
+                        let code = unsafe {
+                            cb(
+                                self.vtable.ctx,
+                                c_name.as_ptr(),
+                                ptrs.as_ptr(),
+                                ptrs.len(),
+                                ctx.trial_number,
+                                &mut out,
+                            )
+                        };
+                        check_callback(code, name, "categorical")?;
+                        if out >= ptrs.len() {
+                            return Err(rustuna_core::Error::with_reason(
+                                rustuna_core::ErrorKind::SamplerError,
+                                format!(
+                                    "categorical callback for {name:?} returned out-of-range index {out}"
+                                ),
+                            ));
+                        }
+                        Ok(out as f64)
+                    }
+                    None => self.fallback.sample_independent(ctx, storage, name, distribution),
+                }
+            }
+        }
+    }
+
+    fn sample_joint(
+        &self,
+        _ctx: &rustuna_core::sampler::Context,
+        _storage: Arc<RwLock<dyn Storage>>,
+        _search_space: &HashMap<String, Distribution>,
+    ) -> rustuna_core::Result<HashMap<String, f64>> {
+        Err(rustuna_core::Error::with_reason(
+            rustuna_core::ErrorKind::SamplerError,
+            "callback sampler does not support joint sampling".to_string(),
+        ))
+    }
+}
+/// Creates a sampler that upcalls into foreign code for suggestions.
+///
+/// The vtable is copied; `ctx` ownership moves to the sampler and `free_ctx`
+/// runs when the sampler is freed. Null callbacks fall back to uniform random
+/// for that distribution kind.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_sampler_callback_new(
+    vtable: *const CallbackSamplerVTable,
+    out_sampler: *mut *mut RustunaSampler,
+) -> i32 {
+    if vtable.is_null() || out_sampler.is_null() {
+        set_last_error(-1, "vtable or out_sampler pointer is null".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let vt = unsafe { &*vtable };
+        // Copy the vtable by value; ctx ownership transfers to the sampler.
+        // SAFETY: function pointers and the opaque ctx are opaque bits here.
+        let vt_copy = CallbackSamplerVTable {
+            ctx: vt.ctx,
+            free_ctx: vt.free_ctx,
+            suggest_float: vt.suggest_float,
+            suggest_int: vt.suggest_int,
+            suggest_categorical: vt.suggest_categorical,
+        };
+        let sampler = CallbackSampler {
+            vtable: vt_copy,
+            fallback: RandomSampler::new(),
+        };
+        let inner: Arc<dyn Sampler> = Arc::new(sampler);
+        unsafe {
+            *out_sampler = Box::into_raw(Box::new(RustunaSampler { inner }));
+        }
+        0
+    }));
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in rustuna_sampler_callback_new: {e:?}"));
             -99
         }
     }

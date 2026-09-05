@@ -36,6 +36,12 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
     /// The pre-enqueued trial queue has no remaining parameter configurations to pop.
     case trialQueueEmpty
 
+    /// An atomic checkout was reentered on the same thread, e.g. a
+    /// `CallbackSampler` closure calling back into its own study while the
+    /// engine holds the checkout slot. Fails loudly instead of deadlocking
+    /// or crossing trial configurations.
+    case reentrantAsk(String)
+
     /// An attempt was made to overwrite an existing attribute key when overwrites are forbidden.
     case attrOverwriteNotAllowed(String)
 
@@ -145,6 +151,7 @@ public enum SwiftunaError: Error, CustomStringConvertible, Sendable, Equatable {
         case .trialDiscarded: "Trial discarded"
         case .attrNotFound(let m): "Attribute not found: \(m)"
         case .trialQueueEmpty: "Trial queue empty"
+        case .reentrantAsk(let m): "Reentrant checkout: \(m)"
         case .attrOverwriteNotAllowed(let m): "Attribute overwrite not allowed: \(m)"
         case .invalidObjectiveValues(let m): "Invalid objective values: \(m)"
         case .trialAlreadyFinished(let m): "Trial already finished: \(m)"
