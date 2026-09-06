@@ -1,4 +1,3 @@
-import Foundation
 public import Swiftuna
 
 /// A trial checked out to a remote worker, as returned by ``StudyCoordinator/ask()``.

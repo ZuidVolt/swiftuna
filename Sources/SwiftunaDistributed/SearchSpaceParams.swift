@@ -1,4 +1,3 @@
-import Foundation
 public import Swiftuna
 
 /// A declarative, `Codable` search space: an ordered list of ``SearchParam``.

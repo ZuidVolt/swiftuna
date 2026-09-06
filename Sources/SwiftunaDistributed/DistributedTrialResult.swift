@@ -1,4 +1,3 @@
-import Foundation
 public import Swiftuna
 
 /// The evaluated result of a trial returned by a worker to the coordinator.

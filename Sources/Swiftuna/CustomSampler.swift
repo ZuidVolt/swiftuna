@@ -250,48 +250,29 @@ extension Study {
             do {
                 vals = try objective(&activeTrial)
             } catch {
-                let partial = fixed.merging(activeTrial.suggestedParams) { _, new in new }
-                for (paramName, paramValue) in partial {
-                    span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
-                }
-                if isTrialPruned(error) {
-                    span?.setAttribute("trial.status", value: "pruned")
-                    span?.end(status: .ok)
-                    try tell(consuming: activeTrial, values: [], state: .pruned)
-                    let finished = PersistedTrial(
-                        number: trialNum, state: .pruned, value: nil, params: partial)
-                    history.append(finished)
-                    runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
-                } else {
-                    span?.setAttribute("trial.status", value: "failed")
-                    span?.end(status: .error(String(describing: error)))
-                    try tell(consuming: activeTrial, values: [], state: .fail)
-                    let finished = PersistedTrial(
-                        number: trialNum, state: .fail, value: nil, params: partial)
-                    history.append(finished)
-                    runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
-                    throw error
-                }
+                try handleObjectiveError(
+                    error,
+                    trial: activeTrial,
+                    trialNum: trialNum,
+                    fixed: fixed,
+                    span: span,
+                    history: &history,
+                    runningBest: &runningBest
+                )
                 continue
             }
-            let recorded = fixed.merging(activeTrial.suggestedParams) { _, new in new }
-            let elapsed = clock.now - startTime
-            for (paramName, paramValue) in recorded {
-                span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
-            }
-            span?.setAttribute("trial.status", value: "complete")
-            span?.setAttribute(
-                "trial.duration_ms",
-                value: .double(Double(elapsed.components.attoseconds) / 1e15))
-            span?.end(status: .ok)
-            // A failing durable record aborts loudly instead of
-            // fail-recording: the fallback would almost certainly fail the
-            // same way, so report what actually happened.
-            try tell(consuming: activeTrial, values: vals, state: .complete)
-            let finished = PersistedTrial(
-                number: trialNum, state: .complete, value: nil, values: vals, params: recorded)
-            history.append(finished)
-            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
+
+            try recordCompletedTrial(
+                trial: activeTrial,
+                trialNum: trialNum,
+                vals: vals,
+                fixed: fixed,
+                startTime: startTime,
+                clock: clock,
+                span: span,
+                history: &history,
+                runningBest: &runningBest
+            )
         }
     }
 
@@ -345,5 +326,70 @@ extension Study {
             using: ClosureCustomSampler(body: suggest),
             objective: objective
         )
+    }
+
+    // MARK: - Inlined Pipeline Helpers
+
+    @inline(always)
+    private func handleObjectiveError(
+        _ error: any Error,
+        trial: consuming Trial,
+        trialNum: Int,
+        fixed: [String: ParameterValue],
+        span: (any TelemetrySpan)?,
+        history: inout [PersistedTrial],
+        runningBest: inout PersistedTrial?
+    ) throws {
+        let partial = fixed.merging(trial.suggestedParams) { _, new in new }
+        for (paramName, paramValue) in partial {
+            span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
+        }
+        if isTrialPruned(error) {
+            span?.setAttribute("trial.status", value: "pruned")
+            span?.end(status: .ok)
+            try tell(consuming: trial, values: [], state: .pruned)
+            let finished = PersistedTrial(
+                number: trialNum, state: .pruned, value: nil, params: partial)
+            history.append(finished)
+            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
+        } else {
+            span?.setAttribute("trial.status", value: "failed")
+            span?.end(status: .error(String(describing: error)))
+            try tell(consuming: trial, values: [], state: .fail)
+            let finished = PersistedTrial(
+                number: trialNum, state: .fail, value: nil, params: partial)
+            history.append(finished)
+            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
+            throw error
+        }
+    }
+
+    @inline(always)
+    private func recordCompletedTrial(
+        trial: consuming Trial,
+        trialNum: Int,
+        vals: [Double],
+        fixed: [String: ParameterValue],
+        startTime: ContinuousClock.Instant,
+        clock: ContinuousClock,
+        span: (any TelemetrySpan)?,
+        history: inout [PersistedTrial],
+        runningBest: inout PersistedTrial?
+    ) throws {
+        let recorded = fixed.merging(trial.suggestedParams) { _, new in new }
+        let elapsed = clock.now - startTime
+        for (paramName, paramValue) in recorded {
+            span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
+        }
+        span?.setAttribute("trial.status", value: "complete")
+        span?.setAttribute(
+            "trial.duration_ms",
+            value: .double(Double(elapsed.components.attoseconds) / 1e15))
+        span?.end(status: .ok)
+        try tell(consuming: trial, values: vals, state: .complete)
+        let finished = PersistedTrial(
+            number: trialNum, state: .complete, value: nil, values: vals, params: recorded)
+        history.append(finished)
+        runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
     }
 }

@@ -1,4 +1,3 @@
-import Foundation
 public import Swiftuna
 
 /// The ask function sampled by the coordinator on each ``StudyCoordinator/ask()``.

@@ -1,5 +1,3 @@
-import Foundation
-
 /// Errors that can occur during distributed hyperparameter orchestration.
 public enum SwiftunaDistributedError: Error, Sendable, Codable, CustomStringConvertible, Equatable {
     case trialNotFound(Int)

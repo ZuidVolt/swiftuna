@@ -1,5 +1,4 @@
 public import Distributed
-import Foundation
 import Swiftuna
 
 /// Runs `nTrials` trials against `coordinator` across `workers` local workers.

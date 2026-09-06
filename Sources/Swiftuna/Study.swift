@@ -1134,7 +1134,7 @@ public final class Study: @unchecked Sendable {
     /// )
     /// try study.addTrial(baseline)
     /// ```
-    public func addTrial(_ trial: PersistedTrial) throws(SwiftunaError) {
+    public func addTrial(_ trial: borrowing PersistedTrial) throws(SwiftunaError) {
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is expired or invalid")
         }

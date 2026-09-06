@@ -59,9 +59,8 @@ func sanitizeRef(_ ref: String) -> String {
 /// Timestamped phase logging to stderr. Compare runs for many minutes;
 /// silent stretches look hung, so every slow step announces itself.
 public func benchLog(_ message: String) {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm:ss"
-    fputs("[\(f.string(from: Date()))] \(message)\n", stderr)
+    let timestamp = Date.now.formatted(date: .omitted, time: .standard)
+    fputs("[\(timestamp)] \(message)\n", stderr)
 }
 
 /// Prepares a worktree for `ref` and returns a bench binary path.

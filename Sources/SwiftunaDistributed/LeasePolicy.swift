@@ -1,5 +1,3 @@
-import Foundation
-
 /// Cap for retired trial-number sets on the coordinator (see `retire`).
 let retiredNumberCap = 4_096
 

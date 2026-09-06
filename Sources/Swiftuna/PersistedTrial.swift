@@ -192,9 +192,8 @@ public struct PersistedTrial: Sendable, Codable {
         try container.encode(userAttrs, forKey: .userAttrs)
         try container.encode(constraints, forKey: .constraints)
         try container.encode(intermediateValues, forKey: .intermediateValues)
-        let isoFormatter = ISO8601DateFormatter()
-        try container.encodeIfPresent(datetimeStart.map { isoFormatter.string(from: $0) }, forKey: .datetimeStart)
-        try container.encodeIfPresent(datetimeComplete.map { isoFormatter.string(from: $0) }, forKey: .datetimeComplete)
+        try container.encodeIfPresent(datetimeStart.map { $0.formatted(.iso8601) }, forKey: .datetimeStart)
+        try container.encodeIfPresent(datetimeComplete.map { $0.formatted(.iso8601) }, forKey: .datetimeComplete)
     }
 
     // MARK: - Subscripts
