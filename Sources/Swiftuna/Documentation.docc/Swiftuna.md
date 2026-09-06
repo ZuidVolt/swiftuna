@@ -15,7 +15,8 @@ Where Swift offers better safety or ergonomics, Swiftuna makes deliberate langua
 - **Non-copyable trials (`~Copyable`).** Swift 6 move semantics prevent use-after-free, double evaluation, and concurrent consumption at compile time.
 - **Static attribute and constraint keys.** Typed `AttributeKey` and `ConstraintKey` declarations replace stringly-typed dictionaries with compile-time checks, Swift enum support, and automatic `Codable` JSON serialization.
 - **Standard library ranges.** Parameter suggestions use `ClosedRange<Double>` and `ClosedRange<Int>` instead of raw lower and upper arguments.
-- **Direct C ABI link.** Static linking against `librustuna_ffi` avoids intermediate allocation overhead
+- **Direct C ABI link.** Static linking against `librustuna_ffi` avoids intermediate allocation overhead.
+- **Unified custom samplers.** Pass custom sampling strategies (``CustomSampler`` or ``CallbackSampler``) directly to `createStudy(sampler:)`. Built-in algorithms like ``CMASampler`` run without wrapper syntax, using flat-buffer Jacobi eigendecomposition with bit-exact Optuna output parity.
 - **Optuna storage compatibility.** SQLite databases created by Swiftuna match Optuna `RDBStorage` byte-for-byte, so `optuna-dashboard` works out of the box.
 
 ---
@@ -69,9 +70,12 @@ if let best = try study.bestTrial {
 - ``TrialState``
 
 ### Study management and factory APIs
-- ``createStudy(name:directions:storage:sampler:pruner:loadIfExists:)``
-- ``createStudy(name:direction:storage:sampler:pruner:loadIfExists:)``
-- ``loadStudy(name:storage:sampler:pruner:)``
+- ``createStudy(name:directions:storage:sampler:pruner:loadIfExists:)-(_,_,_,S,_,_)``
+- ``createStudy(name:directions:storage:sampler:pruner:loadIfExists:)-(_,_,_,CustomSampler,_,_)``
+- ``createStudy(name:direction:storage:sampler:pruner:loadIfExists:)-(_,_,_,S,_,_)``
+- ``createStudy(name:direction:storage:sampler:pruner:loadIfExists:)-(_,_,_,CustomSampler,_,_)``
+- ``loadStudy(name:storage:sampler:pruner:)-(_,_,S,_)``
+- ``loadStudy(name:storage:sampler:pruner:)-(_,_,CustomSampler,_)``
 - ``copyStudy(from:to:as:)``
 - ``deleteStudy(named:in:)``
 - ``getStudies(in:)``
@@ -80,6 +84,7 @@ if let best = try study.bestTrial {
 ### Sampling algorithms
 - ``Sampler``
 - ``TPESampler``
+- ``CMASampler``
 - ``QMCSampler``
 - ``GridSampler``
 - ``NSGAIISampler``

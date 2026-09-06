@@ -33,7 +33,7 @@ public struct StudyHistory: Sendable {
     /// construction — both go through ``best(of:directions:)`` and the fold
     /// below replaces only on strict improvement (first-wins on ties, matching
     /// `min`/`max` with strict predicates).
-    internal init(all: [PersistedTrial], newSince count: Int, best: PersistedTrial?) {
+    package init(all: [PersistedTrial], newSince count: Int, best: PersistedTrial?) {
         self.all = all
         self.new = Array(all.suffix(max(0, all.count - count)))
         self.best = best
@@ -65,7 +65,7 @@ extension StudyHistory {
 
     /// Best completed trial by scan. Single-objective only; `nil` otherwise.
     /// Predicates are the original init's, factored — not reinterpreted.
-    internal static func best(of trials: [PersistedTrial], directions: [Direction]) -> PersistedTrial? {
+    package static func best(of trials: [PersistedTrial], directions: [Direction]) -> PersistedTrial? {
         guard directions.count == 1, let direction = directions.first else { return nil }
         let complete = trials.lazy.filter { $0.state == .complete }
         switch direction {
@@ -85,7 +85,7 @@ extension StudyHistory {
 
     /// Folds one finished trial into a running best in O(1). Only completed
     /// trials can take the lead; anything else leaves the incumbent alone.
-    internal static func fold(_ trial: PersistedTrial, into current: PersistedTrial?, directions: [Direction])
+    package static func fold(_ trial: PersistedTrial, into current: PersistedTrial?, directions: [Direction])
         -> PersistedTrial?
     {
         // NOTE: testFoldMatchesScanOnTies pins this to the scanning init's
@@ -134,6 +134,14 @@ extension StudyHistory {
 /// }
 /// ```
 public protocol CustomSampler: Sendable {
+    /// Whether the optimization driver should retain full parameter dictionaries in the Swift `StudyHistory` buffer.
+    ///
+    /// When `true` (the default), each historical trial in `StudyHistory` retains its full hyperparameter dictionary.
+    /// When `false` (e.g. for algorithms like `CMASampler` that track their own candidate vectors or only need objective values),
+    /// the driver stores an empty parameter dictionary in the history buffer, reducing memory usage by ~50%
+    /// at large trial counts while Rustuna's storage still retains all parameters.
+    var retainsParameterHistory: Bool { get }
+
     /// Proposes the next trial configuration from history.
     ///
     /// - Parameters:
@@ -141,6 +149,10 @@ public protocol CustomSampler: Sendable {
     ///   - trialNumber: Zero-based index of the trial being configured.
     /// - Returns: Fixed parameter values. Omitted params are Rust-sampled.
     func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue]
+}
+
+extension CustomSampler {
+    public var retainsParameterHistory: Bool { true }
 }
 
 /// A custom suggestion closure: the function form of ``CustomSampler``.
@@ -211,6 +223,8 @@ extension Study {
         // current in O(1) per trial, so snapshots never rescan.
         var runningBest = StudyHistory.best(of: history, directions: directions)
 
+        let retainsParams = sampler.retainsParameterHistory
+
         while !budget.shouldStop(submitted: iteration) {
             // Snapshot lives only for the sample call: `all` shares the
             // array buffer with `history`, and sharing it past this scope
@@ -220,7 +234,7 @@ extension Study {
             let fixed: [String: ParameterValue]
             do {
                 let snap = StudyHistory(all: history, newSince: seen, best: runningBest)
-                fixed = try sampler.sample(history: snap, trialNumber: iteration)
+                fixed = try sampler.sample(history: snap, trialNumber: history.count)
             }
             // Mark everything seen *before* suggesting: the next call's `new`
             // is exactly what completed since this one.
@@ -257,7 +271,7 @@ extension Study {
                     fixed: fixed,
                     span: span,
                     history: &history,
-                    runningBest: &runningBest
+                    retainsParams: retainsParams
                 )
                 continue
             }
@@ -271,7 +285,8 @@ extension Study {
                 clock: clock,
                 span: span,
                 history: &history,
-                runningBest: &runningBest
+                runningBest: &runningBest,
+                retainsParams: retainsParams
             )
         }
     }
@@ -338,28 +353,25 @@ extension Study {
         fixed: [String: ParameterValue],
         span: (any TelemetrySpan)?,
         history: inout [PersistedTrial],
-        runningBest: inout PersistedTrial?
+        retainsParams: Bool
     ) throws {
         let partial = fixed.merging(trial.suggestedParams) { _, new in new }
         for (paramName, paramValue) in partial {
             span?.setAttribute("param.\(paramName)", value: paramValue.telemetryAttribute)
         }
-        if isTrialPruned(error) {
-            span?.setAttribute("trial.status", value: "pruned")
+        let isPruned = isTrialPruned(error)
+        let state: TrialState = isPruned ? .pruned : .fail
+        span?.setAttribute("trial.status", value: isPruned ? "pruned" : "failed")
+        if isPruned {
             span?.end(status: .ok)
-            try tell(consuming: trial, values: [], state: .pruned)
-            let finished = PersistedTrial(
-                number: trialNum, state: .pruned, value: nil, params: partial)
-            history.append(finished)
-            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
         } else {
-            span?.setAttribute("trial.status", value: "failed")
             span?.end(status: .error(String(describing: error)))
-            try tell(consuming: trial, values: [], state: .fail)
-            let finished = PersistedTrial(
-                number: trialNum, state: .fail, value: nil, params: partial)
-            history.append(finished)
-            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
+        }
+        try tell(consuming: trial, values: [], state: state)
+        history.append(
+            PersistedTrial(
+                number: trialNum, state: state, value: nil, params: retainsParams ? partial : [:]))
+        if !isPruned {
             throw error
         }
     }
@@ -374,7 +386,8 @@ extension Study {
         clock: ContinuousClock,
         span: (any TelemetrySpan)?,
         history: inout [PersistedTrial],
-        runningBest: inout PersistedTrial?
+        runningBest: inout PersistedTrial?,
+        retainsParams: Bool
     ) throws {
         let recorded = fixed.merging(trial.suggestedParams) { _, new in new }
         let elapsed = clock.now - startTime
@@ -387,9 +400,28 @@ extension Study {
             value: .double(Double(elapsed.components.attoseconds) / 1e15))
         span?.end(status: .ok)
         try tell(consuming: trial, values: vals, state: .complete)
-        let finished = PersistedTrial(
-            number: trialNum, state: .complete, value: nil, values: vals, params: recorded)
-        history.append(finished)
-        runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
+
+        let finishedHistory = PersistedTrial(
+            number: trialNum, state: .complete, value: nil, values: vals,
+            params: retainsParams ? recorded : [:])
+        history.append(finishedHistory)
+
+        if directions.count == 1, let direction = directions.first {
+            let trialVal = vals.first ?? 0.0
+            let isLead: Bool
+            if let current = runningBest {
+                let curVal = StudyHistory.bestValue(of: current, direction: direction)
+                isLead = StudyHistory.isBetter(value: trialVal, than: curVal, direction: direction)
+            } else {
+                isLead = true
+            }
+            if isLead {
+                runningBest =
+                    retainsParams
+                    ? finishedHistory
+                    : PersistedTrial(
+                        number: trialNum, state: .complete, value: nil, values: vals, params: recorded)
+            }
+        }
     }
 }

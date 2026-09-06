@@ -15,6 +15,7 @@ Hyperparameter optimization pairs two distinct mechanisms:
 | Sampler | Strategy | Best for | Multi-objective | Constraints |
 | :--- | :--- | :--- | :--- | :--- |
 | ``TPESampler`` | Tree-structured Parzen Estimator | General continuous and discrete HPO | Yes (MOTPE) | Feasibility partitioning |
+| ``CMASampler`` | Covariance Matrix Adaptation (Active CMA-ES) | Continuous numerical optimization, ill-conditioned surfaces, high dimensional spaces | Single only | Unit-box clipping / resampling |
 | ``QMCSampler`` | Quasi-Monte Carlo (Sobol) | Low-discrepancy space filling | Single only | No |
 | ``GridSampler`` | Cartesian product grid | Small discrete spaces, ablation sweeps | Single only | No |
 | ``NSGAIISampler`` | Genetic evolutionary algorithm | Multi-objective Pareto frontier discovery | Yes (Native) | Constrained-domination |
@@ -41,6 +42,34 @@ TPE fits Parzen window density estimators (Gaussian Mixture Models) for continuo
 // Default TPE sampler with optional seed for deterministic reproducibility
 let sampler = TPESampler(seed: 42)
 let study = try Swiftuna.createStudy(sampler: sampler)
+```
+
+### Covariance matrix adaptation (``CMASampler``)
+
+`CMASampler` implements Active CMA-ES (Hansen 2016) in pure Swift 6, matching the numerical output of Python Optuna's `CmaEsSampler` (`CyberAgentAILab/cmaes`).
+
+It adapts a multivariate normal distribution $\mathcal{N}(m, \sigma^2 C)$ across generations. It tracks step-size path cumulation ($p_\sigma$), rank-1 evolution paths ($p_c$), and active rank-$\mu$ covariance updates using in-place cyclic Jacobi eigendecomposition on flat 1D memory buffers:
+
+- Runs roughly 7x to 15x faster than Python Optuna on continuous benchmarks, with flat sub-millisecond per-trial latency across tens of thousands of trials.
+- Setting `retainsParameterHistory: false` reduces peak memory by approximately 20% to 25% at scale compared to Python Optuna.
+- Setting `useNumpyPRNG: true` runs a 32-bit Mersenne Twister with Box-Muller Gaussian transforms for bit-exact parity with Python Optuna.
+
+```swift
+let cma = CMASampler(
+    dimensions: [
+        .continuous(name: "x0", lower: -5.0, upper: 5.0),
+        .continuous(name: "x1", lower: -5.0, upper: 5.0)
+    ],
+    seed: 42
+)
+
+// Pass directly to createStudy; drives CMA-ES automatically without 'using:'
+let study = try Swiftuna.createStudy(sampler: cma)
+try study.optimize(nTrials: 100) { trial in
+    let x0 = try trial.suggest("x0", in: -5.0...5.0)
+    let x1 = try trial.suggest("x1", in: -5.0...5.0)
+    return x0 * x0 + x1 * x1
+}
 ```
 
 ### Quasi-Monte Carlo Sobol sequences (``QMCSampler``)

@@ -38,7 +38,7 @@ internal struct OptimizationBudget: Sendable {
 /// samples parameter candidates using an active ``Sampler``, prunes unpromising trials via a ``Pruner``,
 /// and persists results across in-memory or SQLite storage backends.
 ///
-/// Studies are typically created using ``Swiftuna/createStudy(name:direction:storage:sampler:pruner:loadIfExists:)``.
+/// Studies are typically created using ``Swiftuna/createStudy(name:direction:storage:sampler:pruner:loadIfExists:)-(_,_,_,S,_,_)``.
 ///
 /// ### Example
 /// ```swift
@@ -66,6 +66,12 @@ public final class Study: @unchecked Sendable {
     /// `copy(to:as:)` inherits the flag because the Rust-side sampler (and
     /// its live callback context) travels with the copied study.
     private let mayInvokeSamplerCallbacks: Bool
+
+    /// Custom sampler attached to the study via ``Swiftuna/createStudy(name:direction:storage:sampler:pruner:loadIfExists:)-(_,_,_,CustomSampler,_,_)``.
+    ///
+    /// When attached, ``optimize(nTrials:timeout:objective:)-3gyl5`` automatically drives
+    /// parameter suggestions using this sampler.
+    public internal(set) var customSampler: (any CustomSampler)?
 
     public var direction: Direction {
         directions.first ?? .minimize
@@ -314,6 +320,16 @@ public final class Study: @unchecked Sendable {
         timeout: Duration? = nil,
         objective: (inout Trial) throws(SwiftunaError) -> [Double]
     ) throws(SwiftunaError) {
+        if let customSampler {
+            do {
+                try optimize(nTrials: nTrials, timeout: timeout, using: customSampler, objective: objective)
+                return
+            } catch let err as SwiftunaError {
+                throw err
+            } catch {
+                throw SwiftunaError.objectiveError("Custom sampler optimization failed: \(error)")
+            }
+        }
         defer {
             syncWithOptunaDashboard()
         }

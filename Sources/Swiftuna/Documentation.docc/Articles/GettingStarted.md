@@ -44,7 +44,7 @@ let study = try Swiftuna.createStudy(
 )
 ```
 
-> Tip: For reproducible runs, pass a seeded sampler such as `TPESampler(seed: 42)` to `createStudy`.
+> Tip: For reproducible runs, pass a seeded sampler such as `TPESampler(seed: 42)` or continuous CMA-ES via `CMASampler(dimensions: [...], seed: 42)` directly to `createStudy`.
 
 ---
 
@@ -161,6 +161,7 @@ This analysis helps you drop uninfluential parameters in subsequent optimization
 
 - Learn the manual ask-and-tell loop and concurrency patterns: <doc:AskAndTellGuide>
 - Choose the best sampler and pruner for your problem: <doc:SamplersAndPruners>
+- Implement custom sampling strategies or configure CMA-ES: <doc:CustomSamplers>
 - Enforce constraints and multi-objective Pareto trade-offs: <doc:ConstrainedOptimization>
 - Persist studies in SQLite and launch Optuna Dashboard: <doc:StorageAndDashboard>
 - Declare type-safe user attributes and Codable schemas: <doc:TypeSafeAttributes>

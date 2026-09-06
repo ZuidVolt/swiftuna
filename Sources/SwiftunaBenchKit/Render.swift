@@ -14,10 +14,14 @@ public enum ANSI {
 
 /// Renders one metric row of a results table.
 public func metricRow(_ m: MetricResult, useColor: Bool) -> String {
-    String(
-        format: "%-24s %12.3f %-8s mean=%9.3f stdev=%8.3f CV=%5.1f%% n=%d",
-        m.name, m.median, m.unit,
-        m.mean, m.stdev, m.cv * 100, m.n)
+    let namePadded = m.name.count < 24 ? m.name + String(repeating: " ", count: 24 - m.name.count) : m.name
+    let unitPadded = m.unit.count < 8 ? m.unit + String(repeating: " ", count: 8 - m.unit.count) : m.unit
+    let stats = String(
+        format: "%12.3f %@ mean=%9.3f stdev=%8.3f CV=%5.1f%%",
+        m.median, unitPadded,
+        m.mean, m.stdev, m.cv * 100
+    )
+    return "\(namePadded) \(stats) n=\(m.n)"
 }
 
 /// Renders a full suite result as a human-readable table.

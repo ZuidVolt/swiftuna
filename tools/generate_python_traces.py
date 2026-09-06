@@ -51,3 +51,56 @@ with open(out_dir / "quadratic_python.json", "w") as f:
 print(
     "✅ Python parity trace generated at Tests/Fixtures/ParityCorpus/quadratic_python.json"
 )
+
+
+# 2. CMA-ES Mathematical Parity Trace
+def run_cmaes():
+    try:
+        import cmaes
+        import numpy as np
+    except ImportError:
+        print("Note: cmaes or numpy not found. Skipping cmaes trace.")
+        return None
+
+    cma = cmaes.CMA(mean=np.array([0.5, 0.5]), sigma=0.2, seed=42)
+    generations_data = []
+
+    for gen in range(3):
+        solutions = []
+        for i in range(cma.population_size):
+            pt = np.array([0.4 + 0.05 * i + 0.02 * gen, 0.6 - 0.04 * i - 0.01 * gen])
+            val = float((pt[0] - 0.2) ** 2 + (pt[1] - 0.8) ** 2)
+            solutions.append((pt, val))
+
+        cma.tell(solutions)
+
+        generations_data.append(
+            {
+                "generation": gen + 1,
+                "solutions": [
+                    {"point": s[0].tolist(), "value": s[1]} for s in solutions
+                ],
+                "expected_mean": cma._mean.tolist(),
+                "expected_sigma": float(cma._sigma),
+                "expected_pc": cma._pc.tolist(),
+                "expected_p_sigma": cma._p_sigma.tolist(),
+                "expected_cov": cma._C.flatten().tolist(),
+            }
+        )
+
+    return {
+        "problem_name": "cmaes_step",
+        "seed": 42,
+        "initial_mean": [0.5, 0.5],
+        "initial_sigma": 0.2,
+        "generations": generations_data,
+    }
+
+
+cma_trace = run_cmaes()
+if cma_trace:
+    with open(out_dir / "cmaes_step.json", "w") as f:
+        json.dump(cma_trace, f, indent=2)
+    print(
+        "✅ CMA-ES parity trace generated at Tests/Fixtures/ParityCorpus/cmaes_step.json"
+    )

@@ -4,7 +4,7 @@
 /// maximization (``Direction/maximize``).
 ///
 /// For multi-objective optimization, pass an array of `Direction` values corresponding to each objective
-/// to ``createStudy(name:directions:storage:sampler:pruner:loadIfExists:)``.
+/// to ``createStudy(name:directions:storage:sampler:pruner:loadIfExists:)-(_,_,_,S,_,_)``.
 ///
 /// ### Examples
 ///

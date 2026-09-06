@@ -17,7 +17,7 @@ Where Swift offers better safety or ergonomics, Swiftuna makes deliberate langua
 - **Non-copyable trials (`~Copyable`).** Swift 6 move semantics prevent use-after-free, double evaluation, and concurrent consumption at compile time.
 - **Static attribute and constraint keys.** Typed `AttributeKey` and `ConstraintKey` declarations replace stringly-typed dictionaries with compile-time checks, Swift enum support, and automatic `Codable` JSON serialization.
 - **Standard library ranges.** Parameter suggestions use `ClosedRange<Double>` and `ClosedRange<Int>` instead of raw lower and upper arguments.
-- **Direct C ABI link.** Static linking against `librustuna_ffi` avoids intermediate allocation overhead.
+- **Unified custom samplers.** Pass custom sampling strategies (`CustomSampler` or `CallbackSampler`) directly to `createStudy(sampler:)`. Built-in algorithms like `CMASampler` run without wrapper syntax, using flat memory buffers and Jacobi eigendecomposition with bit-exact Optuna output parity.
 - **Optuna storage compatibility.** SQLite databases created by Swiftuna match Optuna `RDBStorage` byte-for-byte, so `optuna-dashboard` works out of the box.
 
 ---
@@ -112,7 +112,7 @@ try await study.optimize(nTrials: 100, concurrency: 4) { trial in
 }
 ```
 
-Optimization budgets: at least one of `nTrials` or `timeout` is required (`timeout: .seconds(1800)`), otherwise `optimize` throws `invalidArgument`. With `GridSampler`, `ask()` throws `SwiftunaError.searchSpaceExhausted` once the Cartesian product is drained — catch it to exit manual loops early.
+Optimization budgets: at least one of `nTrials` or `timeout` is required (`timeout: .seconds(1800)`), otherwise `optimize` throws `invalidArgument`. With `GridSampler`, `ask()` throws `SwiftunaError.searchSpaceExhausted` once the Cartesian product is drained. Catch it to exit manual loops early.
 
 ### Sampling algorithms
 
@@ -142,14 +142,26 @@ let searchSpace: [String: GridSampler.ValueList] = [
 ]
 let grid = GridSampler(searchSpace: searchSpace, seed: 42)
 
+// Covariance Matrix Adaptation (Active CMA-ES) in pure Swift 6
+// Zero-copy cyclic Jacobi eigendecomposition with bit-exact Python Optuna parity
+let cma = CMASampler(
+    dimensions: [
+        .continuous(name: "x0", lower: -5.0, upper: 5.0),
+        .continuous(name: "x1", lower: -5.0, upper: 5.0),
+    ],
+    seed: 42
+)
+// Pass directly to createStudy; drives CMA-ES automatically without 'using:'
+let cmaStudy = try Swiftuna.createStudy(sampler: cma)
+
 // Custom strategy in Swift: per-suggestion closures (mid-trial conditioning
 // included); unassigned kinds fall back to random inside Rustuna
 let custom = CallbackSampler(onFloat: { name, low, high, step, log, trialNumber in
     Double.random(in: low...high)
 })
 
-// History-driven strategy: one method reads past trials, the driver fixes
-// the config ahead of ask (omitted params fall back to the study sampler)
+// History-driven custom strategy: one method reads past trials.
+// Pass directly to createStudy(sampler:) or run ad-hoc with study.optimize(using:)
 struct HillClimb: CustomSampler {
     func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue] {
         guard let bx = history.best?.params["x"]?.asDouble else {
@@ -158,13 +170,25 @@ struct HillClimb: CustomSampler {
         return ["x": .double(bx + Double.random(in: -1.0...1.0))]
     }
 }
-try study.optimize(nTrials: 50, using: HillClimb()) { trial in
+let customStudy = try Swiftuna.createStudy(sampler: HillClimb())
+try customStudy.optimize(nTrials: 50) { trial in
     let x = try trial.suggest("x", in: -10.0...10.0)
     return x * x
 }
 ```
 
-`seed` is `UInt64?` on every sampler (`nil` = non-deterministic). Pass a sampler to `createStudy(sampler:)`; single-objective studies default to `TPESampler()`, multi-objective (`directions:`) studies default to `NSGAIISampler()`.
+`seed` is `UInt64?` on every sampler (`nil` = non-deterministic). Pass any `Sampler` or `CustomSampler` directly to `createStudy(sampler:)`; single-objective studies default to `TPESampler()`, and multi-objective (`directions:`) studies default to `NSGAIISampler()`.
+
+Custom samplers conform to `CustomSampler`, which exposes `retainsParameterHistory: Bool` (defaults to `true`). Samplers that maintain internal state matrices (such as `CMASampler`) set it to `false` to avoid retaining duplicate parameter dictionaries across thousands of trials, reducing peak heap memory.
+
+#### Relative scaling: CMASampler vs Python Optuna (cmaes) on 50D Rosenbrock
+
+| Trials ($N$) | Average speedup | Memory advantage |
+| :--- | :--- | :--- |
+| 100 | ~7.4x faster | ~80% lower memory |
+| 1,000 | ~7.0x faster | ~60% lower memory |
+| 10,000 | ~10.3x faster | ~28% lower memory |
+| 25,000 | ~15.3x faster | ~22% lower memory |
 
 Categorical suggestions preserve Swift types without casting:
 
@@ -356,6 +380,8 @@ Read the full documentation on [DocC](https://zuidvolt.github.io/swiftuna/docume
 - [Storage backends and dashboard](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/storageanddashboard)
 - [Type-safe attributes](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/typesafeattributes)
 - [Observability and telemetry](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/telemetryandobservability)
+- [Distributed optimization](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/distributedoptimization)
+- [GPU and MLX acceleration](https://zuidvolt.github.io/swiftuna/documentation/swiftuna/gpuandmlx)
 
 ---
 

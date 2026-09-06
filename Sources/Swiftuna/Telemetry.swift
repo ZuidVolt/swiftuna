@@ -81,7 +81,7 @@ public protocol TelemetrySpan: Sendable {
     ///
     /// `nil` unless the backend supports distributed context propagation.
     /// The core treats this as an opaque string: it is forwarded through
-    /// ``DistributedTrial`` untouched and never parsed. OpenTelemetry adapters
+    /// distributed trial contexts untouched and never parsed. OpenTelemetry adapters
     /// map it to a remote `SpanContext`.
     var traceParent: String? { get }
 
