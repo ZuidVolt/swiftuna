@@ -5,8 +5,10 @@
 //! plumbing so the per-feature files cannot drift apart. Include with:
 //! `#[path = "common/mod.rs"] mod common;`
 
+#![allow(dead_code)]
+
 use rustuna_ffi::*;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::ptr;
 
 /// Creates an in-memory single-objective study owned by the caller.
@@ -30,11 +32,6 @@ pub fn create_study(name: &str, sampler: *mut RustunaSampler) -> *mut RustunaStu
     rustuna_sampler_free(sampler);
     assert!(!study.is_null());
     study
-}
-
-/// Creates a study with a seeded random sampler.
-pub fn random_study(name: &str, seed: u64) -> *mut RustunaStudy {
-    create_study(name, rustuna_sampler_random_new(seed, true))
 }
 
 /// Checks out the next trial.
@@ -70,12 +67,8 @@ pub fn suggest_int(trial: *mut RustunaTrial, name: &str, low: i64, high: i64) ->
 /// Suggests a categorical and returns the chosen index.
 pub fn suggest_categorical(trial: *mut RustunaTrial, name: &str, choices: &[&str]) -> usize {
     let c_name = CString::new(name).unwrap();
-    let c_choices: Vec<CString> = choices
-        .iter()
-        .map(|c| CString::new(*c).unwrap())
-        .collect();
-    let ptrs: Vec<*const std::os::raw::c_char> =
-        c_choices.iter().map(|c| c.as_ptr()).collect();
+    let c_choices: Vec<CString> = choices.iter().map(|c| CString::new(*c).unwrap()).collect();
+    let ptrs: Vec<*const std::os::raw::c_char> = c_choices.iter().map(|c| c.as_ptr()).collect();
     let mut out = 0usize;
     assert_eq!(
         rustuna_trial_suggest_categorical(
@@ -97,12 +90,4 @@ pub fn tell_complete(study: *mut RustunaStudy, number: u32, value: f64) {
         rustuna_study_tell_multi(study, number, 1, values.as_ptr(), 1, ptr::null()),
         0
     );
-}
-
-/// Reads a returned JSON string and frees it.
-pub fn read_json_string(ptr: *mut std::os::raw::c_char) -> String {
-    assert!(!ptr.is_null());
-    let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
-    unsafe { rustuna_string_free(ptr) };
-    s
 }

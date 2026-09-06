@@ -2872,29 +2872,6 @@ fn encode_label_cstrings(
     Ok(out)
 }
 
-#[cfg(test)]
-mod label_tests {
-    use super::*;
-
-    #[test]
-    fn clean_labels_encode_verbatim() {
-        let v =
-            encode_label_cstrings(&["adam".to_string(), "sgd".to_string(), "".to_string()], "opt")
-                .unwrap();
-        let strs: Vec<_> = v.iter().map(|c| c.to_str().unwrap()).collect();
-        assert_eq!(strs, vec!["adam", "sgd", ""]);
-    }
-
-    #[test]
-    fn nul_label_fails_loudly_not_silently() {
-        let err = encode_label_cstrings(&["a\u{0}b".to_string(), "c".to_string()], "opt")
-            .expect_err("NUL label must fail, not empty itself");
-        assert!(
-            err.to_string().contains("NUL"),
-            "unexpected error: {err}"
-        );
-    }
-}
 
 impl rustuna_core::sampler::Sampler for CallbackSampler {
     fn support_joint_sampling(&self) -> bool {
@@ -3076,3 +3053,28 @@ pub extern "C" fn rustuna_sampler_callback_new(
         }
     }
 }
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn clean_labels_encode_verbatim() {
+        let v =
+            encode_label_cstrings(&["adam".to_string(), "sgd".to_string(), "".to_string()], "opt")
+                .unwrap();
+        let strs: Vec<_> = v.iter().map(|c| c.to_str().unwrap()).collect();
+        assert_eq!(strs, vec!["adam", "sgd", ""]);
+    }
+
+    #[test]
+    fn nul_label_fails_loudly_not_silently() {
+        let err = encode_label_cstrings(&["a\u{0}b".to_string(), "c".to_string()], "opt")
+            .expect_err("NUL label must fail, not empty itself");
+        assert!(
+            err.to_string().contains("NUL"),
+            "unexpected error: {err}"
+        );
+    }
+}
+

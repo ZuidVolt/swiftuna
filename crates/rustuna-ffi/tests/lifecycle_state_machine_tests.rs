@@ -223,7 +223,7 @@ proptest! {
         let attr_key = CString::new("batch_size").unwrap();
         let attr_val = CString::new("64").unwrap();
 
-        for (_idx, outcome) in outcomes.iter().enumerate() {
+        for outcome in outcomes.iter() {
             let mut trial: *mut RustunaTrial = ptr::null_mut();
             prop_assert_eq!(rustuna_study_ask(study, &mut trial), 0);
             let mut alpha = 0.0f64;

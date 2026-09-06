@@ -1,16 +1,16 @@
 use rustuna_ffi::*;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[path = "common/mod.rs"]
 mod common;
 
-use common::{ask_trial, random_study, suggest_categorical, suggest_float, suggest_int, tell_complete};
+use common::{ask_trial, create_study, suggest_categorical, suggest_float, suggest_int, tell_complete};
 
 #[test]
 fn typed_enqueue_fixes_all_kinds() {
-    let study = random_study("enqueue_typed_test", 7);
+    let study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     let n_x = CString::new("x").unwrap();
     let n_n = CString::new("n").unwrap();
     let n_o = CString::new("opt").unwrap();
@@ -44,7 +44,7 @@ fn typed_enqueue_fixes_all_kinds() {
 
 #[test]
 fn typed_enqueue_rejects_bad_input() {
-    let study = random_study("enqueue_typed_test", 7);
+    let study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     let n = CString::new("x").unwrap();
     let names = [n.as_ptr()];
     let nums = [1.0f64];
@@ -106,7 +106,7 @@ fn typed_enqueue_rejects_bad_input() {
 
 #[test]
 fn json_enqueue_still_works() {
-    let study = random_study("enqueue_typed_test", 7);
+    let study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     let pj = CString::new(r#"{"x": 3.5}"#).unwrap();
     assert_eq!(
         rustuna_study_enqueue_trial(study, pj.as_ptr(), ptr::null()),
@@ -133,13 +133,19 @@ fn fetch_json_since(study: *mut RustunaStudy, from: u32) -> Vec<serde_json::Valu
         rustuna_study_get_trials_json_since(study, u32::MAX, from, &mut out, &mut len),
         0
     );
-    let s = common::read_json_string(out);
+    let s = {
+        let ptr = out;
+        assert!(!ptr.is_null());
+        let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        rustuna_string_free(ptr);
+        s
+    };
     serde_json::from_str::<Vec<serde_json::Value>>(&s).unwrap()
 }
 
 #[test]
 fn since_fetch_returns_only_the_tail() {
-    let study = random_study("enqueue_typed_test", 7);
+    let study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     for n in 0..5u32 {
         let trial = ask_trial(study);
         let x = suggest_float(trial, "x", -10.0, 10.0);
@@ -218,14 +224,14 @@ fn suggest_all(study: *mut RustunaStudy) -> (f64, i64, usize) {
 fn typed_matches_json_path() {
     // Same logical params through both encodings must suggest identically.
     // This is the debug insurance for the typed path's pointer arithmetic.
-    let json_study = random_study("enqueue_typed_test", 7);
+    let json_study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     let pj = CString::new(r#"{"x": 2.5, "n": 32, "opt": "sgd"}"#).unwrap();
     assert_eq!(
         rustuna_study_enqueue_trial(json_study, pj.as_ptr(), ptr::null()),
         0
     );
 
-    let typed_study = random_study("enqueue_typed_test", 7);
+    let typed_study = create_study("enqueue_typed_test", rustuna_sampler_random_new(7, true));
     let n_x = CString::new("x").unwrap();
     let n_n = CString::new("n").unwrap();
     let n_o = CString::new("opt").unwrap();
@@ -259,13 +265,13 @@ fn user_attrs_parity_between_paths() {
     let attrs = CString::new(r#"{"note": "warm-start"}"#).unwrap();
     let pj = CString::new(r#"{"x": 2.5}"#).unwrap();
 
-    let json_study = random_study("ua_json", 7);
+    let json_study = create_study("ua_json", rustuna_sampler_random_new(7, true));
     assert_eq!(
         rustuna_study_enqueue_trial(json_study, pj.as_ptr(), attrs.as_ptr()),
         0
     );
 
-    let typed_study = random_study("ua_typed", 7);
+    let typed_study = create_study("ua_typed", rustuna_sampler_random_new(7, true));
     let n_x = CString::new("x").unwrap();
     let names = [n_x.as_ptr()];
     let kinds = [1u8];
