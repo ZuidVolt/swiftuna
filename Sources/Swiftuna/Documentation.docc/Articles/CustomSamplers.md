@@ -49,8 +49,7 @@ A realistic sketch. Epsilon-greedy over categorical arms with random floats:
 
 ```swift
 final class EpsilonGreedy: Sendable {
-    private let lock = NSLock()
-    private var bestArm: Int = 0
+    private let bestArm = Mutex<Int>(0)
 
     func sampler() -> CallbackSampler {
         CallbackSampler(
@@ -58,9 +57,8 @@ final class EpsilonGreedy: Sendable {
                 Double.random(in: low...high)
             },
             onCategorical: { [self] name, choices, _ in
-                lock.lock(); defer { lock.unlock() }
                 return Double.random(in: 0...1) < 0.1
-                    ? Int.random(in: 0..<choices.count) : bestArm
+                    ? Int.random(in: 0..<choices.count) : bestArm.withLock { $0 }
             }
         )
     }

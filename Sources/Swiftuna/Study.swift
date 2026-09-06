@@ -838,6 +838,23 @@ public final class Study: @unchecked Sendable {
 
     // MARK: - Trial Enqueueing & Hyperparameter Importance
 
+    private enum EnqueuedAttributePayload: Encodable {
+        case int(Int)
+        case double(Double)
+        case bool(Bool)
+        case string(String)
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .int(let v): try container.encode(v)
+            case .double(let v): try container.encode(v)
+            case .bool(let v): try container.encode(v)
+            case .string(let v): try container.encode(v)
+            }
+        }
+    }
+
     /// Enqueues a trial configuration with specified parameter values and optional user attributes.
     ///
     /// Pre-queued configurations will be evaluated by the study in FIFO order prior to stochastic sampling.
@@ -884,23 +901,23 @@ public final class Study: @unchecked Sendable {
             return try enqueueTyped(params: typed, raw: raw, userAttrs: userAttrs)
         }
 
-        var jsonDict: [String: Any] = [:]
+        var jsonDict: [String: EnqueuedAttributePayload] = [:]
         for (k, v) in params {
             let str = v.toAttributeString()
             if let i = Int(str) {
-                jsonDict[k] = i
+                jsonDict[k] = .int(i)
             } else if let d = Double(str) {
-                jsonDict[k] = d
+                jsonDict[k] = .double(d)
             } else if str == "true" {
-                jsonDict[k] = true
+                jsonDict[k] = .bool(true)
             } else if str == "false" {
-                jsonDict[k] = false
+                jsonDict[k] = .bool(false)
             } else {
-                jsonDict[k] = str
+                jsonDict[k] = .string(str)
             }
         }
 
-        guard let paramsData = try? JSONSerialization.data(withJSONObject: jsonDict, options: []),
+        guard let paramsData = try? JSONEncoder().encode(jsonDict),
             let paramsJson = String(data: paramsData, encoding: .utf8)
         else {
             throw SwiftunaError.invalidArgument("Failed to serialize params dictionary to JSON")

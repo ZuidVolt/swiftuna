@@ -1,4 +1,3 @@
-import Foundation
 internal import LibRustuna
 
 /// History snapshot handed to a ``CustomSampler`` on every trial.

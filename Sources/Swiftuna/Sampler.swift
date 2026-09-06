@@ -285,7 +285,7 @@ public struct GridSampler: Sampler {
     }
 
     public func makeRawHandle() -> OpaquePointer? {
-        guard let data = try? JSONSerialization.data(withJSONObject: searchSpace, options: []),
+        guard let data = try? JSONEncoder().encode(searchSpace),
             let jsonStr = String(data: data, encoding: .utf8)
         else {
             return nil

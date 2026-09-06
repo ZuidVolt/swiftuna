@@ -1,5 +1,3 @@
-import Foundation
-
 /// The optimization direction for a single objective in a study.
 ///
 /// A study can optimize for either cost/loss minimization (``Direction/minimize``) or performance/accuracy

@@ -1,5 +1,3 @@
-import Foundation
-
 /// Lightweight snapshot metadata describing an existing study in a storage backend.
 ///
 /// `StudySummary` is retrieved via ``StorageBackend/studies()`` or ``getStudies(in:)`` without loading

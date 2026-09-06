@@ -1,4 +1,3 @@
-import Foundation
 import Synchronization
 
 /// Protocol for deciding whether an active trial should be early-stopped based on intermediate values.

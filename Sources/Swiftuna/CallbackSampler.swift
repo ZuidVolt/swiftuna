@@ -1,4 +1,3 @@
-import Foundation
 internal import LibRustuna
 
 #if canImport(Darwin)

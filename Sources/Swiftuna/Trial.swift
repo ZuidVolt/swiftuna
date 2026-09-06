@@ -1,4 +1,3 @@
-import Foundation
 internal import LibRustuna
 
 /// An active trial representing a single evaluation step of an objective function.

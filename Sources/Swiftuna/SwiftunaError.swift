@@ -1,4 +1,3 @@
-import Foundation
 internal import LibRustuna
 
 /// Represents all error conditions that can arise during study creation, sampling, optimization, or storage operations.

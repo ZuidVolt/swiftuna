@@ -403,7 +403,7 @@ private func judgeSides(
         // reps+1 rounds, first dropped as warmup; A/B order alternates.
         // Sides are tagged at collection, so no index juggling below.
         for round in 0...reps {
-            let started = Date()
+            let started = ContinuousClock.now
             let firstIsA = round % 2 == 0
             let sides: [(Bool, String, Bool)] = firstIsA
                 ? [(true, sideA.binary, overlayA), (false, sideB.binary, overlayB)]
@@ -420,7 +420,8 @@ private func judgeSides(
                 }
             }
             if round == 0 { continue }
-            benchLog("round \(round)/\(reps) done in \(Int(Date().timeIntervalSince(started)))s")
+            let elapsed = ContinuousClock.now - started
+            benchLog("round \(round)/\(reps) done in \(Int(elapsed.components.seconds))s")
         }
         var verdicts: [MetricVerdict] = []
         for m in samplesA.keys.sorted() {

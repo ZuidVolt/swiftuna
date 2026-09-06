@@ -15,8 +15,8 @@ public enum ANSI {
 /// Renders one metric row of a results table.
 public func metricRow(_ m: MetricResult, useColor: Bool) -> String {
     String(
-        format: "%-24@ %12.3f %-8@ mean=%9.3f stdev=%8.3f CV=%5.1f%% n=%d",
-        m.name as NSString, m.median, m.unit as NSString,
+        format: "%-24s %12.3f %-8s mean=%9.3f stdev=%8.3f CV=%5.1f%% n=%d",
+        m.name, m.median, m.unit,
         m.mean, m.stdev, m.cv * 100, m.n)
 }
 
@@ -52,9 +52,9 @@ public func renderVerdicts(_ verdicts: [MetricVerdict], useColor: Bool) -> Strin
 
 /// Serializes a result file (pretty, sorted keys).
 public func encodeResult(_ r: SuiteResult) throws -> String {
-    let data = try JSONEncoder().encode(r)
-    let obj = try JSONSerialization.jsonObject(with: data)
-    let pretty = try JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let pretty = try encoder.encode(r)
     guard let s = String(data: pretty, encoding: .utf8) else {
         throw BenchError.suiteFailed("result JSON is not UTF-8")
     }

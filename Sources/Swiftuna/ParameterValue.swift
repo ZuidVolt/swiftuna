@@ -1,5 +1,3 @@
-import Foundation
-
 /// A strongly typed, heterogeneous hyperparameter value evaluated by an optimization study.
 ///
 /// Unlike internal mathematical floats, `ParameterValue` preserves the true domain

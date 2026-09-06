@@ -1,5 +1,3 @@
-import Foundation
-
 /// A compile-time, strongly-typed key for trial constraints.
 ///
 /// In mathematical optimization, constraints enforce requirements beyond the objective function, such as
