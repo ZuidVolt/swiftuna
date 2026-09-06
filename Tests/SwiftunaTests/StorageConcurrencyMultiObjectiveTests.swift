@@ -274,4 +274,34 @@ struct StorageConcurrencyMultiObjectiveTests {
             }
         }
     }
+
+    @Test("Concurrent askEnqueued serialization and deadlock freedom across tasks")
+    func testConcurrentAskEnqueuedSerialization() async throws {
+        let study = try Swiftuna.createStudy(direction: .minimize)
+        let concurrency = 20
+
+        await withTaskGroup(of: (Int, Double).self) { group in
+            for i in 0..<concurrency {
+                group.addTask {
+                    let expectedVal = Double(i) * 10.0 + 1.5
+                    var trial = try! study.askEnqueued(["fixed_param": .double(expectedVal)])
+                    #expect(trial.number >= 0)
+                    let suggested = try! trial.suggest("fixed_param", in: 0.0...1000.0)
+                    #expect(suggested == expectedVal)
+                    try! study.tell(consuming: trial, value: suggested)
+                    return (i, expectedVal)
+                }
+            }
+
+            for await (idx, expectedVal) in group {
+                #expect(expectedVal == Double(idx) * 10.0 + 1.5)
+            }
+        }
+
+        let trials = try study.trials
+        #expect(trials.count == concurrency)
+        let receivedValues = Set(trials.compactMap { $0.params["fixed_param"]?.asDouble })
+        #expect(receivedValues.count == concurrency)
+    }
 }
+
