@@ -28,7 +28,7 @@ public struct Trial: ~Copyable {
     ///
     /// `nil` for manual ask/tell trials and whenever no tracer is registered,
     /// so `report`/`shouldPrune` pay a single nil check on the disabled path.
-    internal var telemetrySpan: (any TelemetrySpan)? = nil
+    internal var telemetrySpan: (any TelemetrySpan)?
 
     /// Sampled values by parameter name, recorded only while instrumented.
     ///

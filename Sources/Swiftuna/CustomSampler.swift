@@ -23,21 +23,82 @@ public struct StudyHistory: Sendable {
     public init(all: [PersistedTrial], newSince count: Int, directions: [Direction]) {
         self.all = all
         self.new = Array(all.suffix(max(0, all.count - count)))
-        if directions.count == 1, let direction = directions.first {
-            let complete = all.lazy.filter { $0.state == .complete }
-            switch direction {
-            case .minimize:
-                self.best = complete.min {
-                    ($0.values.first ?? .infinity) < ($1.values.first ?? .infinity)
-                }
-            case .maximize:
-                self.best = complete.max {
-                    ($0.values.first ?? -.infinity) < ($1.values.first ?? -.infinity)
-                }
-            }
-        } else {
-            self.best = nil
+        self.best = Self.best(of: all, directions: directions)
+    }
+
+    /// Precomputed best without scanning: the driver's running-best path.
+    ///
+    /// The driver folds each finished trial into a cached best (O(1) per
+    /// trial) instead of rescanning history per snapshot (O(history), which
+    /// totals quadratic over a run). Same ordering as the scanning init by
+    /// construction — both go through ``best(of:directions:)`` and the fold
+    /// below replaces only on strict improvement (first-wins on ties, matching
+    /// `min`/`max` with strict predicates).
+    internal init(all: [PersistedTrial], newSince count: Int, best: PersistedTrial?) {
+        self.all = all
+        self.new = Array(all.suffix(max(0, all.count - count)))
+        self.best = best
+    }
+}
+
+/// Best-trial ordering shared by the scanning init and the driver's fold.
+extension StudyHistory {
+    /// Scalar value a trial competes with (direction-aware missing default).
+    fileprivate static func bestValue(of trial: PersistedTrial, direction: Direction) -> Double {
+        switch direction {
+        case .minimize:
+            return trial.values.first ?? .infinity
+        case .maximize:
+            return trial.values.first ?? -.infinity
         }
+    }
+
+    /// Strict improvement test. First-wins on ties, matching `min`/`max`
+    /// with strict predicates in ``best(of:directions:)``.
+    fileprivate static func isBetter(value a: Double, than b: Double, direction: Direction) -> Bool {
+        switch direction {
+        case .minimize:
+            return a < b
+        case .maximize:
+            return a > b
+        }
+    }
+
+    /// Best completed trial by scan. Single-objective only; `nil` otherwise.
+    /// Predicates are the original init's, factored — not reinterpreted.
+    internal static func best(of trials: [PersistedTrial], directions: [Direction]) -> PersistedTrial? {
+        guard directions.count == 1, let direction = directions.first else { return nil }
+        let complete = trials.lazy.filter { $0.state == .complete }
+        switch direction {
+        case .minimize:
+            return complete.min {
+                isBetter(
+                    value: bestValue(of: $0, direction: direction),
+                    than: bestValue(of: $1, direction: direction),
+                    direction: direction)
+            }
+        case .maximize:
+            return complete.max {
+                bestValue(of: $0, direction: direction) < bestValue(of: $1, direction: direction)
+            }
+        }
+    }
+
+    /// Folds one finished trial into a running best in O(1). Only completed
+    /// trials can take the lead; anything else leaves the incumbent alone.
+    internal static func fold(_ trial: PersistedTrial, into current: PersistedTrial?, directions: [Direction])
+        -> PersistedTrial?
+    {
+        // NOTE: testFoldMatchesScanOnTies pins this to the scanning init's
+        // ordering; keep the two in lockstep.
+        guard trial.state == .complete,
+            directions.count == 1, let direction = directions.first
+        else { return current }
+        guard let current else { return trial }
+        return isBetter(
+            value: bestValue(of: trial, direction: direction),
+            than: bestValue(of: current, direction: direction),
+            direction: direction) ? trial : current
     }
 }
 
@@ -116,7 +177,8 @@ extension Study {
     /// Optimizes with a custom Swift sampler: suggest, fix, evaluate, record.
     ///
     /// Each iteration reads history (accumulated locally, O(1) amortized —
-    /// no refetch), asks the sampler, atomically fixes and checks out the
+    /// no refetch; best folded incrementally, never rescanned), asks the
+    /// sampler, atomically fixes and checks out the
     /// trial (`askEnqueued`, safe across drivers sharing the study),
     /// evaluates, and records. History params are exact: the sampler's fixed
     /// dict merged over everything the objective actually suggested
@@ -146,14 +208,25 @@ extension Study {
         var history = try trials
         var seen = history.count
         var iteration = 0
+        // One scan up front; the fold at the bottom of the loop keeps this
+        // current in O(1) per trial, so snapshots never rescan.
+        var runningBest = StudyHistory.best(of: history, directions: directions)
 
         while !budget.shouldStop(submitted: iteration) {
-            let snap = StudyHistory(all: history, newSince: seen, directions: directions)
+            // Snapshot lives only for the sample call: `all` shares the
+            // array buffer with `history`, and sharing it past this scope
+            // would force a full copy on the append below (CoW) — O(history)
+            // per trial, quadratic over the run. A sampler that retains
+            // history pays that copy itself, once, by choice.
+            let fixed: [String: ParameterValue]
+            do {
+                let snap = StudyHistory(all: history, newSince: seen, best: runningBest)
+                fixed = try sampler.sample(history: snap, trialNumber: iteration)
+            }
             // Mark everything seen *before* suggesting: the next call's `new`
             // is exactly what completed since this one.
             seen = history.count
             // Abort loudly: nothing to record, original error preserved.
-            let fixed = try sampler.sample(history: snap, trialNumber: iteration)
 
             let trial: Trial
             do {
@@ -186,14 +259,18 @@ extension Study {
                     span?.setAttribute("trial.status", value: "pruned")
                     span?.end(status: .ok)
                     try tell(consuming: activeTrial, values: [], state: .pruned)
-                    history.append(PersistedTrial(
-                        number: trialNum, state: .pruned, value: nil, params: partial))
+                    let finished = PersistedTrial(
+                        number: trialNum, state: .pruned, value: nil, params: partial)
+                    history.append(finished)
+                    runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
                 } else {
                     span?.setAttribute("trial.status", value: "failed")
                     span?.end(status: .error(String(describing: error)))
                     try tell(consuming: activeTrial, values: [], state: .fail)
-                    history.append(PersistedTrial(
-                        number: trialNum, state: .fail, value: nil, params: partial))
+                    let finished = PersistedTrial(
+                        number: trialNum, state: .fail, value: nil, params: partial)
+                    history.append(finished)
+                    runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
                     throw error
                 }
                 continue
@@ -212,8 +289,10 @@ extension Study {
             // fail-recording: the fallback would almost certainly fail the
             // same way, so report what actually happened.
             try tell(consuming: activeTrial, values: vals, state: .complete)
-            history.append(PersistedTrial(
-                number: trialNum, state: .complete, value: nil, values: vals, params: recorded))
+            let finished = PersistedTrial(
+                number: trialNum, state: .complete, value: nil, values: vals, params: recorded)
+            history.append(finished)
+            runningBest = StudyHistory.fold(finished, into: runningBest, directions: directions)
         }
     }
 

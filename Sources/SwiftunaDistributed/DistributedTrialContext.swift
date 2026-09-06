@@ -1,7 +1,7 @@
 public import Distributed
 import Foundation
-import Synchronization
 public import Swiftuna
+import Synchronization
 
 /// A worker-side handle for one checked-out trial.
 ///

@@ -1,6 +1,12 @@
 import Foundation
 internal import LibRustuna
 
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#endif
+
 /// A sampler implemented in Swift, called back from the Rustuna engine.
 ///
 /// Assign any subset of the suggest closures; distribution kinds without a
@@ -16,8 +22,8 @@ internal import LibRustuna
 ///
 /// Checking out trials from inside a closure throws
 /// ``SwiftunaError/reentrantAsk(_:)`` instead of leaking. The reentrancy
-/// guard costs roughly half a microsecond per suggestion (thread-local
-/// bookkeeping); irrelevant past short trials, measured on B20.
+/// guard costs ~1ns per suggestion (one pthread TLS read); irrelevant at
+/// any trial length.
 ///
 /// ### Example
 /// ```swift
@@ -75,19 +81,42 @@ public struct CallbackSampler: Sampler, Sendable {
     }
 }
 
-/// Thread-local depth flag: set around user-closure invocation in the
-/// trampolines below. `Study.ask()` / `askEnqueued` refuse checkout while
-/// set — a trial checked out mid-suggestion would leak unfinished and
-/// scramble queue pairing. Same-thread only, which is exactly the upcall
-/// shape (synchronous FFI, no executor hop).
-internal let samplerCallbackDepthKey = "org.swiftuna.samplerCallback.active"
+/// Process-wide TLS slot marking sampler-callback reentrancy.
+///
+/// `pthread_getspecific` costs ~1ns against ~85ns for a thread-dictionary
+/// lookup (measured H1 probe), and the read sits on every `ask` via
+/// `Study.checkNotInCallback`. One key per process, created once; the slot
+/// holds a non-retained sentinel, so the nil destructor is correct —
+/// `run` always clears it, and a dead thread owns nothing.
+internal enum SamplerCallbackDepth {
+    private static let key: pthread_key_t = {
+        var key = pthread_key_t()
+        pthread_key_create(&key, nil)
+        return key
+    }()
+
+    /// Whether the current thread is inside a sampler callback.
+    ///
+    /// Same-thread only, which is exactly the upcall shape (synchronous
+    /// FFI, no executor hop). A trial checked out mid-suggestion would leak
+    /// unfinished and scramble queue pairing — `Study.ask()` /
+    /// `askEnqueued` refuse checkout while set.
+    @inline(always)
+    static func isActive() -> Bool {
+        pthread_getspecific(key) != nil
+    }
+
+    /// Runs `body` with the depth flag set for the current thread.
+    static func run<R>(_ body: () -> R) -> R {
+        pthread_setspecific(key, UnsafeMutableRawPointer(bitPattern: 0x1))
+        defer { pthread_setspecific(key, nil) }
+        return body()
+    }
+}
 
 /// Runs `body` with the callback-depth flag set for the current thread.
 private func withCallbackDepth<R>(_ body: () -> R) -> R {
-    let state = Thread.current.threadDictionary
-    state[samplerCallbackDepthKey] = true
-    defer { state.removeObject(forKey: samplerCallbackDepthKey) }
-    return body()
+    SamplerCallbackDepth.run(body)
 }
 
 /// Retained as the vtable `ctx`; released by `callbackFreeContext` when the
@@ -177,9 +206,10 @@ private func callbackSuggestCategorical(
         guard let cStr = choices[i] else { return 1 }
         labels.append(String(cString: cStr))
     }
-    guard let index = withCallbackDepth({
-        box.categoricalFn?(String(cString: name), labels, Int(trialNumber))
-    }), index >= 0, index < count
+    guard
+        let index = withCallbackDepth({
+            box.categoricalFn?(String(cString: name), labels, Int(trialNumber))
+        }), index >= 0, index < count
     else {
         return 1
     }

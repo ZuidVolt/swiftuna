@@ -210,12 +210,12 @@ public struct NoOpTelemetrySpan: TelemetrySpan {
     @inline(always) public func end(status: SpanStatus) {}
     @inline(always) public var traceParent: String? { nil }
     @inline(always) public func traceChild(name: String, attributes: [String: String]) -> any TelemetrySpan {
-        NoOpTelemetrySpan()
+        Self()
     }
     @inline(always) public func traceChild(
         name: String, attributes: [String: TelemetryAttribute]
     ) -> any TelemetrySpan {
-        NoOpTelemetrySpan()
+        Self()
     }
 }
 

@@ -188,4 +188,155 @@ struct CustomSamplerTests {
             Issue.record("expected reentrantAsk, got \(String(describing: inner.withLock { $0 }))")
         }
     }
+
+    @Test("Callback int and categorical closures drive suggestions")
+    func testCallbackIntAndCategorical() throws {
+        let sampler = CallbackSampler(
+            onInt: { _, _, _, _, _, _ in 32 },
+            onCategorical: { _, _, _ in 1 }
+        )
+        let study = try Swiftuna.createStudy(name: "cb_intcat_\(UUID().uuidString)", sampler: sampler)
+        try study.optimize(nTrials: 3) { trial in
+            let n = try trial.suggest("n", in: 1...64)
+            #expect(n == 32)
+            let opt = try trial.suggest("opt", choices: ["adam", "sgd"])
+            #expect(opt == "sgd")
+            return Double(n)
+        }
+        #expect(try study.trials.count == 3)
+    }
+
+    @Test("Kinds without a closure fall back to uniform random")
+    func testCallbackPartialFallback() throws {
+        let sampler = CallbackSampler(onFloat: { _, low, high, _, _, _ in (low + high) / 2 })
+        let study = try Swiftuna.createStudy(name: "cb_fallback_\(UUID().uuidString)", sampler: sampler)
+        try study.optimize(nTrials: 5) { trial in
+            let x = try trial.suggest("x", in: -10.0...10.0)
+            #expect(x == 0.0) // midpoint closure
+            let n = try trial.suggest("n", in: 1...64) // engine-sampled
+            #expect((1...64).contains(n))
+            let opt = try trial.suggest("opt", choices: ["adam", "sgd"]) // engine-sampled
+            #expect(["adam", "sgd"].contains(opt))
+            return x + Double(n)
+        }
+        #expect(try study.trials.count == 5)
+    }
+
+    @Test("Callback returning nil fails the suggestion as a sampler error")
+    func testCallbackNilFails() throws {
+        let sampler = CallbackSampler(onFloat: { _, _, _, _, _, _ in nil })
+        let study = try Swiftuna.createStudy(name: "cb_nil_\(UUID().uuidString)", sampler: sampler)
+        var trial = try study.ask()
+        #expect(throws: SwiftunaError.self) {
+            try trial.suggest("x", in: -10.0...10.0)
+        }
+    }
+
+    @Test("Partial fixing still records exact history, including Rust-sampled rest")
+    func testPartialFixHistoryExact() throws {
+        struct FixXOnly: CustomSampler {
+            func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue] {
+                ["x": .double(2.0)]
+            }
+        }
+        let study = try Swiftuna.createStudy(name: "custom_partial_\(UUID().uuidString)")
+        try study.optimize(nTrials: 3, using: FixXOnly()) { trial in
+            let x = try trial.suggest("x", in: -10.0...10.0)
+            let y = try trial.suggest("y", in: 0.0...1.0) // omitted: Rust-sampled
+            return x + y
+        }
+        let trials = try study.trials
+        #expect(trials.count == 3)
+        for t in trials {
+            // Fixed param kept; the leftover the sampler never saw is recorded too.
+            #expect(t.params["x"]?.asDouble == 2.0)
+            #expect(t.params["y"]?.asDouble != nil)
+        }
+    }
+
+    @Test("Running-best fold matches the scanning init, ties included")
+    func testFoldMatchesScanOnTies() throws {
+        func history(values: [Double], state: TrialState = .complete) -> [PersistedTrial] {
+            values.enumerated().map { i, v in
+                PersistedTrial(number: i, state: state, value: v, values: [v], params: [:])
+            }
+        }
+        // Minimize with a tie for best; maximize with a tie; multi; empty; non-complete.
+        let cases: [([Double], [Direction])] = [
+            ([3.0, 1.0, 1.0, 2.0], [.minimize]),
+            ([1.0, 3.0, 3.0, 2.0], [.maximize]),
+            ([1.0, 2.0], [.minimize, .minimize]),
+            ([], [.minimize]),
+        ]
+        for (values, directions) in cases {
+            let all = history(values: values)
+            let scanned = StudyHistory(all: all, newSince: 0, directions: directions).best
+            let folded = all.reduce(nil as PersistedTrial?) {
+                StudyHistory.fold($1, into: $0, directions: directions)
+            }
+            #expect(scanned?.number == folded?.number)
+            #expect(scanned?.values.first == folded?.values.first)
+        }
+        // Pruned/failed trials can never take the lead in either path.
+        let mixed = [
+            PersistedTrial(number: 0, state: .fail, value: -100.0, values: [-100.0], params: [:]),
+            PersistedTrial(number: 1, state: .pruned, value: -200.0, values: [-200.0], params: [:]),
+            PersistedTrial(number: 2, state: .complete, value: 5.0, values: [5.0], params: [:]),
+        ]
+        let scanned = StudyHistory(all: mixed, newSince: 0, directions: [.minimize]).best
+        let folded = mixed.reduce(nil as PersistedTrial?) {
+            StudyHistory.fold($1, into: $0, directions: [.minimize])
+        }
+        #expect(scanned?.number == 2)
+        #expect(folded?.number == 2)
+    }
+
+    @Test("Copied callback study keeps the reentrancy guard")
+    func testCopiedStudyKeepsReentrancyGuard() throws {
+        let box = Mutex<Study?>(nil)
+        let inner = Mutex<SwiftunaError?>(nil)
+        let sampler = CallbackSampler(onFloat: { _, _, _, _, _, _ in
+            do {
+                if let study = box.withLock({ $0 }) {
+                    _ = try study.ask()
+                }
+            } catch let error as SwiftunaError {
+                inner.withLock { $0 = error }
+            } catch {}
+            return 1.0
+        })
+        let study = try Swiftuna.createStudy(name: "reentrant_src_\(UUID().uuidString)", sampler: sampler)
+        // The Rust-side sampler (and its live callback context) travels with
+        // the copy, so the guard must travel too.
+        let copy = try study.copy(to: .inMemory, as: "reentrant_copy_\(UUID().uuidString)")
+        box.withLock { $0 = copy }
+        var trial = try copy.ask()
+        #expect(try trial.suggest("x", in: -10.0...10.0) == 1.0)
+        try copy.tell(consuming: trial, value: 1.0)
+        if case .reentrantAsk = inner.withLock({ $0 }) {} else {
+            Issue.record("expected reentrantAsk, got \(String(describing: inner.withLock { $0 }))")
+        }
+    }
+
+    @Test("Custom driver stops cleanly when the grid is exhausted")
+    func testGridExhaustionStopsCustomDriver() throws {
+        struct FixNothing: CustomSampler {
+            func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue] {
+                [:]
+            }
+        }
+        let grid = GridSampler(searchSpace: ["x": [1.0, 2.0]], seed: 42)
+        let study = try Swiftuna.createStudy(name: "custom_grid_\(UUID().uuidString)", sampler: grid)
+        // Must return, not throw: the driver breaks on searchSpaceExhausted.
+        try study.optimize(nTrials: 5, using: FixNothing()) { trial in
+            let x = try trial.suggest("x", in: 0.0...10.0)
+            return x
+        }
+        let trials = try study.trials
+        // Both grid points were evaluated. (The engine records a fail side
+        // effect on the draining checkout, so count past 2 is engine detail
+        // this test deliberately does not pin.)
+        let completedXs = Set(trials.filter { $0.state == .complete }.compactMap { $0.params["x"]?.asDouble })
+        #expect(completedXs == [1.0, 2.0])
+    }
 }

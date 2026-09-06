@@ -113,7 +113,8 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
 
     // MARK: - CustomStringConvertible
 
-    public var description: String {        switch self {
+    public var description: String {
+        switch self {
         case .int(let i): return String(i)
         case .double(let d): return String(d)
         case .string(let s): return s
@@ -124,7 +125,7 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
     // MARK: - Initializer
 
     public init<T: Equatable>(_ value: T) {
-        if let p = value as? ParameterValue {
+        if let p = value as? Self {
             self = p
         } else if let i = value as? Int {
             self = .int(i)
@@ -173,7 +174,7 @@ public enum ParameterValue: Sendable, CustomStringConvertible, Codable {
 
 // MARK: - ExpressibleBy Literals
 
-extension ParameterValue: ParameterValue.ParameterValueConvertible {
+extension ParameterValue: Self.ParameterValueConvertible {
     var asParameterValue: ParameterValue { self }
 }
 

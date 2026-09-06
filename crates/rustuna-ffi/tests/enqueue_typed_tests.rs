@@ -118,6 +118,14 @@ fn json_enqueue_still_works() {
     rustuna_study_free(study);
 }
 
+fn fetch_user_attrs(study: *mut RustunaStudy) -> serde_json::Value {
+    fetch_json_since(study, 0)
+        .into_iter()
+        .find(|t| t.get("number").and_then(|v| v.as_u64()) == Some(0))
+        .and_then(|t| t.get("user_attrs").cloned())
+        .unwrap()
+}
+
 fn fetch_json_since(study: *mut RustunaStudy, from: u32) -> Vec<serde_json::Value> {
     let mut out: *mut std::os::raw::c_char = ptr::null_mut();
     let mut len = 0usize;
@@ -240,6 +248,90 @@ fn typed_matches_json_path() {
     );
 
     assert_eq!(suggest_all(json_study), suggest_all(typed_study));
+    rustuna_study_free(json_study);
+    rustuna_study_free(typed_study);
+}
+
+#[test]
+fn user_attrs_parity_between_paths() {
+    // The shared parse_user_attrs_json refactor must treat both enqueue
+    // paths identically: same attrs stored, same rejections.
+    let attrs = CString::new(r#"{"note": "warm-start"}"#).unwrap();
+    let pj = CString::new(r#"{"x": 2.5}"#).unwrap();
+
+    let json_study = random_study("ua_json", 7);
+    assert_eq!(
+        rustuna_study_enqueue_trial(json_study, pj.as_ptr(), attrs.as_ptr()),
+        0
+    );
+
+    let typed_study = random_study("ua_typed", 7);
+    let n_x = CString::new("x").unwrap();
+    let names = [n_x.as_ptr()];
+    let kinds = [1u8];
+    let nums = [2.5f64];
+    let strs = [ptr::null()];
+    assert_eq!(
+        rustuna_study_enqueue_typed(
+            typed_study,
+            names.as_ptr(),
+            kinds.as_ptr(),
+            nums.as_ptr(),
+            strs.as_ptr(),
+            1,
+            attrs.as_ptr(),
+        ),
+        0
+    );
+
+    // Malformed attrs fail identically on both paths.
+    let bad = CString::new("{oops").unwrap();
+    assert_ne!(
+        rustuna_study_enqueue_trial(json_study, pj.as_ptr(), bad.as_ptr()),
+        0
+    );
+    assert_eq!(
+        rustuna_study_enqueue_trial(json_study, pj.as_ptr(), bad.as_ptr()),
+        rustuna_study_enqueue_typed(
+            typed_study,
+            names.as_ptr(),
+            kinds.as_ptr(),
+            nums.as_ptr(),
+            strs.as_ptr(),
+            1,
+            bad.as_ptr(),
+        )
+    );
+    // "{}" is accepted as empty on both.
+    let empty = CString::new("{}").unwrap();
+    assert_eq!(
+        rustuna_study_enqueue_trial(json_study, pj.as_ptr(), empty.as_ptr()),
+        0
+    );
+    assert_eq!(
+        rustuna_study_enqueue_typed(
+            typed_study,
+            names.as_ptr(),
+            kinds.as_ptr(),
+            nums.as_ptr(),
+            strs.as_ptr(),
+            1,
+            empty.as_ptr(),
+        ),
+        0
+    );
+
+    // Complete the first trial on each side so attrs are observed post-tell.
+    for (study, n) in [(json_study, 0u32), (typed_study, 0u32)] {
+        let trial = ask_trial(study);
+        let x = suggest_float(trial, "x", -10.0, 10.0);
+        rustuna_trial_free(trial);
+        tell_complete(study, n, x * x);
+    }
+    let ju = fetch_user_attrs(json_study);
+    let tu = fetch_user_attrs(typed_study);
+    assert_eq!(ju, tu);
+    assert_eq!(ju.get("note").and_then(|v| v.as_str()), Some("warm-start"));
     rustuna_study_free(json_study);
     rustuna_study_free(typed_study);
 }

@@ -167,7 +167,7 @@ public final class Study: @unchecked Sendable {
     ///
     /// Refuses checkout from inside a sampler callback (``SwiftunaError/reentrantAsk(_:)``):
     /// a trial checked out mid-suggestion would leak unfinished and scramble
-    /// queue pairing. See `samplerCallbackDepth` in `CallbackSampler.swift`.
+    /// queue pairing. See `SamplerCallbackDepth` in `CallbackSampler.swift`.
     /// Refuses trial checkout from inside a sampler callback.
     ///
     /// A trial checked out mid-suggestion would leak unfinished and scramble
@@ -175,14 +175,15 @@ public final class Study: @unchecked Sendable {
     // One check shared by ``ask()`` and ``askEnqueued(_:)``. Always-inline:
     // after the flag guard the hot path must be a single predictable branch
     // with no call overhead (measured: a call here costs ~15ns/ask).
-    @inline(__always)
+    @inline(always)
     private func checkNotInCallback() throws(SwiftunaError) {
         // Fast path first: studies without a callback sampler can never set
-        // the flag, so skip the thread-dictionary lookup entirely.
+        // the flag, so skip the TLS read entirely.
         guard mayInvokeSamplerCallbacks else { return }
-        if Thread.current.threadDictionary[samplerCallbackDepthKey] != nil {
+        if SamplerCallbackDepth.isActive() {
             throw SwiftunaError.reentrantAsk(
-                "Cannot check out a trial from inside a sampler callback: the trial would leak unfinished and queue pairing would scramble.")
+                "Cannot check out a trial from inside a sampler callback: the trial would leak unfinished and queue pairing would scramble."
+            )
         }
     }
 

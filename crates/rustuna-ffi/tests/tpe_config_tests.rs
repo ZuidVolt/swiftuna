@@ -51,3 +51,14 @@ fn tpe_full_seeded_determinism() {
     };
     assert_eq!(a, b);
 }
+
+#[test]
+fn tpe_zero_startup_uses_engine_default() {
+    // n_startup_trials = 0 keeps the engine default (10): must run cleanly
+    // past the default startup window. This pins our zero-mapping branch.
+    let study = study_with_tpe_full(-1, 0, 99);
+    let values = run_trials(study, 12);
+    assert_eq!(values.len(), 12);
+    assert!(values.iter().all(|v| v.is_finite()));
+    rustuna_study_free(study);
+}

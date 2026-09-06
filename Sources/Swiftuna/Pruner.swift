@@ -69,7 +69,7 @@ public struct MedianPruner: Pruner {
         )
     }
 
-    @inline(__always)
+    @inline(always)
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
