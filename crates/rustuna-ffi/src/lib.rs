@@ -1265,7 +1265,12 @@ pub extern "C" fn rustuna_trial_suggest_categorical(
             let choice_str = unsafe { CStr::from_ptr(choice_ptr) }
                 .to_string_lossy()
                 .into_owned();
-            category_labels.push(rustuna_core::attr::CategoryLabel::String(choice_str));
+            let label = match choice_str.as_str() {
+                "true" => rustuna_core::attr::CategoryLabel::Bool(true),
+                "false" => rustuna_core::attr::CategoryLabel::Bool(false),
+                _ => rustuna_core::attr::CategoryLabel::String(choice_str),
+            };
+            category_labels.push(label);
         }
 
         let dist_choice = match t
@@ -2843,6 +2848,54 @@ fn check_callback(code: i32, name: &str, kind: &str) -> rustuna_core::Result<()>
     Ok(())
 }
 
+/// Encodes category labels for the C ABI.
+///
+/// NUL bytes cannot cross into C strings: fail loudly with a sampler error
+/// instead of silently emptying the label (which would misalign every
+/// choice index after it).
+fn encode_label_cstrings(
+    label_strs: &[String],
+    param_name: &str,
+) -> rustuna_core::Result<Vec<CString>> {
+    let mut out = Vec::with_capacity(label_strs.len());
+    for s in label_strs {
+        match CString::new(s.as_str()) {
+            Ok(c) => out.push(c),
+            Err(_) => {
+                return Err(rustuna_core::Error::with_reason(
+                    rustuna_core::ErrorKind::SamplerError,
+                    format!("categorical label for {param_name:?} contains a NUL byte"),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn clean_labels_encode_verbatim() {
+        let v =
+            encode_label_cstrings(&["adam".to_string(), "sgd".to_string(), "".to_string()], "opt")
+                .unwrap();
+        let strs: Vec<_> = v.iter().map(|c| c.to_str().unwrap()).collect();
+        assert_eq!(strs, vec!["adam", "sgd", ""]);
+    }
+
+    #[test]
+    fn nul_label_fails_loudly_not_silently() {
+        let err = encode_label_cstrings(&["a\u{0}b".to_string(), "c".to_string()], "opt")
+            .expect_err("NUL label must fail, not empty itself");
+        assert!(
+            err.to_string().contains("NUL"),
+            "unexpected error: {err}"
+        );
+    }
+}
+
 impl rustuna_core::sampler::Sampler for CallbackSampler {
     fn support_joint_sampling(&self) -> bool {
         false
@@ -2938,12 +2991,8 @@ impl rustuna_core::sampler::Sampler for CallbackSampler {
                         Some(ls) => ls.iter().map(|l| l.serialize()).collect(),
                         None => (0..*cardinality).map(|i| i.to_string()).collect(),
                     };
-                    let c_labels: Vec<CString> = label_strs
-                        .iter()
-                        .map(|s| CString::new(s.as_str()).unwrap_or_default())
-                        .collect();
-                    let ptrs: Vec<*const c_char> = c_labels.iter().map(|c| c.as_ptr()).collect();
-                    let mut out = 0usize;
+                    let c_labels = encode_label_cstrings(&label_strs, name)?;
+                    let ptrs: Vec<*const c_char> = c_labels.iter().map(|c| c.as_ptr()).collect();                    let mut out = 0usize;
                     let code = unsafe {
                         cb(
                             self.vtable.ctx,

@@ -6,60 +6,63 @@ import Testing
 @Suite("Enqueue, Importance & Pipeline Property Tests")
 struct EnqueueAndImportancePropertyTests {
 
-    @Test("Enqueued parameters strictly override stochastic sampling across arbitrary values")
-    func testEnqueuedParameterEquivalence() async throws {
+    @Test("Enqueue invariants: kinds × FIFO × partial fixing × user attributes round-trip")
+    func testEnqueueInvariants() async throws {
         await propertyCheck(
             input: Gen<Double>.double(in: -100.0...100.0),
-            Gen<Int>.int(in: -1000...1000)
-        ) { targetWeight, targetStep in
+            Gen<Int>.int(in: -1000...1000),
+            Gen<Bool>.bool()
+        ) { targetWeight, targetStep, targetFlag in
             do {
                 let study = try Swiftuna.createStudy(direction: .minimize)
 
-                try study.enqueue([
-                    "weight": .double(targetWeight),
-                    "step": .int(targetStep)
-                ])
+                // Enqueue Trial 0: Fully specified heterogeneous configuration with user attributes
+                let optChoice = targetFlag ? "sgd" : "adam"
+                try study.enqueue(
+                    [
+                        "weight": .double(targetWeight),
+                        "step": .int(targetStep),
+                        "opt": .string(optChoice),
+                        "flag": .bool(targetFlag),
+                    ],
+                    userAttrs: ["tag": "baseline_\(targetStep)"]
+                )
 
-                var trial = try study.ask()
-                let suggestedWeight = try trial.suggest("weight", in: -10000.0...10000.0)
-                let suggestedStep = try trial.suggest("step", in: -10000...10000)
+                // Enqueue Trial 1: Partially specified configuration (only step fixed)
+                try study.enqueue(["step": .int(targetStep + 10)])
 
-                #expect(abs(suggestedWeight - targetWeight) < 1e-12)
-                #expect(suggestedStep == targetStep)
+                // Ask Trial 0: Verify exact parameter fixing & FIFO identity
+                var trial0 = try study.ask()
+                #expect(trial0.number == 0)
+                let w0 = try trial0.suggest("weight", in: -10000.0...10000.0)
+                let s0 = try trial0.suggest("step", in: -10000...10000)
+                let o0 = try trial0.suggest("opt", choices: ["adam", "sgd"])
+                let f0 = try trial0.suggest("flag", choices: [true, false])
 
-                try study.tell(consuming: trial, value: 0.0)
-            } catch {
-                Issue.record("Enqueue property violation: \(error)")
-            }
-        }
-    }
+                #expect(abs(w0 - targetWeight) < 1e-12)
+                #expect(s0 == targetStep)
+                #expect(o0 == optChoice)
+                #expect(f0 == targetFlag)
+                try study.tell(consuming: trial0, value: 1.0)
 
-    @Test("Multiple enqueued configurations execute in exact FIFO order")
-    func testMultipleEnqueuedTrialsFIFO() async throws {
-        await propertyCheck(input: Gen<Int>.int(in: 2...5)) { count in
-            do {
-                let study = try Swiftuna.createStudy(direction: .minimize)
+                // Ask Trial 1: Partially fixed parameter matches; unfixed parameter samples successfully
+                var trial1 = try study.ask()
+                #expect(trial1.number == 1)
+                let s1 = try trial1.suggest("step", in: -10000...10000)
+                let w1 = try trial1.suggest("weight", in: -10000.0...10000.0)
+                #expect(s1 == targetStep + 10)
+                #expect((-10000.0...10000.0).contains(w1))
+                try study.tell(consuming: trial1, value: 2.0)
 
-                let expectedValues = (0..<count).map { Double($0 * 10 + 3) }
-
-                for val in expectedValues {
-                    try study.enqueue(["param": .double(val)])
-                }
-
-                for (idx, expectedVal) in expectedValues.enumerated() {
-                    var trial = try study.ask()
-                    #expect(trial.number == idx)
-
-                    let val = try trial.suggest("param", in: -1000.0...1000.0)
-                    #expect(val == expectedVal)
-
-                    try study.tell(consuming: trial, value: val)
-                }
-
+                // Verify storage read-back and attribute preservation
                 let trials = try study.trials
-                #expect(trials.count == count)
+                #expect(trials.count == 2)
+                #expect(trials[0].userAttrs["tag"] == "baseline_\(targetStep)")
+                #expect(trials[0].params["flag"]?.asBool == targetFlag)
+                #expect(trials[0].params["opt"]?.asString == optChoice)
+                #expect(trials[1].params["step"]?.asInt == targetStep + 10)
             } catch {
-                Issue.record("FIFO enqueue property violation: \(error)")
+                Issue.record("Enqueue invariant violation: \(error)")
             }
         }
     }

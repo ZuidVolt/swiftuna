@@ -5,8 +5,8 @@ import Testing
 @Suite("GridSampler & Cartesian Exhaustion Tests", .serialized)
 struct GridSamplerTests {
 
-    @Test("GridSampler precomputes Cartesian product and optimize finishes early on exhaustion")
-    func testGridSamplerCartesianExhaustion() throws {
+    @Test("GridSampler exhausts Cartesian product: optimize stops early and next ask throws")
+    func testGridSamplerExhaustionAndExplicitAskRejection() throws {
         // 2 x 3 = 6 combinations
         let sampler = GridSampler(searchSpace: [
             "x": [1.0, 2.0],
@@ -18,15 +18,14 @@ struct GridSamplerTests {
             sampler: sampler
         )
 
-        // Request 15 trials, but only 6 exist in the grid
+        // Request 15 trials, but only 6 exist in the grid: optimize must stop cleanly
         try study.optimize(nTrials: 15) { trial in
             let x = try trial.suggest("x", in: 1.0...2.0)
             let y = try trial.suggest("y", in: 10.0...30.0)
             return x + y
         }
 
-        let trials = try study.trials
-        let completed = trials.completed()
+        let completed = try study.trials.completed()
         #expect(completed.count == 6)
 
         // Check that all 6 combinations are unique
@@ -43,33 +42,8 @@ struct GridSamplerTests {
         #expect(observedPairs.contains("2.0,10.0"))
         #expect(observedPairs.contains("2.0,20.0"))
         #expect(observedPairs.contains("2.0,30.0"))
-    }
 
-    @Test("Explicit study.ask() throws searchSpaceExhausted when grid combinations are depleted")
-    func testGridSamplerExplicitAskThrowsWhenExhausted() throws {
-        // 2 x 2 = 4 combinations
-        let sampler = GridSampler(searchSpace: [
-            "a": [0.0, 1.0],
-            "b": [10.0, 20.0],
-        ])
-
-        let study = try Swiftuna.createStudy(
-            name: "grid_ask_throw_\(UUID().uuidString)",
-            sampler: sampler
-        )
-
-        for _ in 0..<4 {
-            var trial = try study.ask()
-            _ = try trial.suggest("a", in: 0.0...1.0)
-            _ = try trial.suggest("b", in: 10.0...20.0)
-            try study.tell(consuming: trial, value: 1.0)
-        }
-
-        // 5th ask must throw searchSpaceExhausted
-        #expect(throws: SwiftunaError.self) {
-            _ = try study.ask()
-        }
-
+        // Subsequent ask on exhausted space must throw searchSpaceExhausted
         do {
             _ = try study.ask()
             Issue.record("Expected searchSpaceExhausted error")

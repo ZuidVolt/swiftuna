@@ -5,12 +5,12 @@ import Testing
 @Suite("Quasi-Monte Carlo (QMC) Sobol Sampler Tests")
 struct QMCSamplerTests {
 
-    @Test("QMCSampler with identical seed generates deterministic parameter sequences")
-    func testQMCSamplerDeterminism() throws {
-        func runStudy() throws -> [Double] {
+    @Test("QMCSampler determinism across multiple seeds and divergence across differing seeds")
+    func testQMCSamplerDeterminismAndDivergence() throws {
+        func runStudy(seed: UInt64) throws -> [Double] {
             let study = try Swiftuna.createStudy(
-                name: "test_qmc_det_\(UUID().uuidString)",
-                sampler: QMCSampler(seed: 999)
+                name: "test_qmc_det_\(seed)_\(UUID().uuidString)",
+                sampler: QMCSampler(seed: seed)
             )
 
             var suggestions: [Double] = []
@@ -22,11 +22,17 @@ struct QMCSamplerTests {
             return suggestions
         }
 
-        let run1 = try runStudy()
-        let run2 = try runStudy()
+        let testSeeds: [UInt64] = [0, 42, 999, 1337]
+        for seed in testSeeds {
+            let run1 = try runStudy(seed: seed)
+            let run2 = try runStudy(seed: seed)
+            #expect(run1.count == 10)
+            #expect(run1 == run2, "QMCSampler must produce identical sequences given seed \(seed)")
+        }
 
-        #expect(run1.count == 10)
-        #expect(run1 == run2, "QMCSampler must produce identical low-discrepancy sequences given the same seed")
+        let runA = try runStudy(seed: 42)
+        let runB = try runStudy(seed: 999)
+        #expect(runA != runB, "Different seeds must produce diverging sequences")
     }
 
     @Test("QMCSampler Sobol sequence provides low-discrepancy quadrant balance")

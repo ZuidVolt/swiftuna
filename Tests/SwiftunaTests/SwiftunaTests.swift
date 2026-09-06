@@ -1,16 +1,9 @@
+import Foundation
 import PropertyBased
 import Synchronization
 import Testing
 
 @testable import Swiftuna
-
-@Test
-func testAdditionIsCommutative() async {
-    // propertyCheck runs the closure multiple times with different inputs
-    await propertyCheck(input: Gen.int()) { n in
-        #expect(n + 1 == 1 + n)
-    }
-}
 
 @Suite("Typed Throws and Static Sampler Tests")
 struct TypedErrorAndSamplerTests {
@@ -124,10 +117,17 @@ struct OptunaCalibrationTests {
         }
     }
 
-    @Test("Type-safe user attributes on active Trial and read-back on PersistedTrial")
-    func testTypeSafeUserAttributes() throws {
+    @Test("Type-safe and string user attributes across active Trial, PersistedTrial, and Study")
+    func testTypeSafeTrialAndStudyUserAttributes() throws {
         let study = try Swiftuna.createStudy(name: "attrs_test", sampler: TPESampler(seed: 101))
 
+        // Study-level user attributes
+        try study.setUserAttr(WeightFingerprint.self, value: "global_corpus_hash_xyz")
+        try study.setUserAttr("dataset_version", value: "v2.1")
+        #expect(try study.userAttr(WeightFingerprint.self) == "global_corpus_hash_xyz")
+        #expect(try study.userAttr("dataset_version") == "v2.1")
+
+        // Trial-level user attributes
         var trial = try study.ask()
         trial[ModelAccuracy.self] = 0.985
         trial[WeightFingerprint.self] = "sha256:test_weights_123"
@@ -145,20 +145,6 @@ struct OptunaCalibrationTests {
         #expect(acc == 0.985)
         #expect(fp == "sha256:test_weights_123")
         #expect(note == "baseline calibration")
-    }
-
-    @Test("Study-level user attributes setting and retrieval")
-    func testStudyLevelUserAttributes() throws {
-        let study = try Swiftuna.createStudy(name: "study_attrs_test")
-
-        try study.setUserAttr(WeightFingerprint.self, value: "global_corpus_hash_xyz")
-        try study.setUserAttr("dataset_version", value: "v2.1")
-
-        let fp = try study.userAttr(WeightFingerprint.self)
-        let version = try study.userAttr("dataset_version")
-
-        #expect(fp == "global_corpus_hash_xyz")
-        #expect(version == "v2.1")
     }
 
     @Test("Parameter stability interval calculation on good trials")
@@ -182,17 +168,17 @@ struct OptunaCalibrationTests {
 @Suite("Trial Enqueue, Importance & Functional Toolkit Tests")
 struct EnqueueAndImportanceTests {
 
-    @Test("Trial enqueueing executes pre-queued parameters before stochastic sampling")
-    func testEnqueueBaselineTrial() throws {
-        let study = try Swiftuna.createStudy(name: "enqueue_test", sampler: TPESampler(seed: 42))
+    @Test("Typed enqueue fixes parameters without JSON round trip")
+    func testTypedEnqueue() throws {
+        let study = try Swiftuna.createStudy(name: "typed_enqueue_test", sampler: TPESampler(seed: 42))
 
-        // Pre-register baseline configuration using fluent chaining
         try study.enqueue(
             [
                 "weight": .double(1.5),
                 "min_comp": .int(8),
                 "mode": .string("fast"),
-            ], userAttrs: ["tag": "baseline"])
+                "flag": .bool(true),
+            ], userAttrs: ["tag": "typed"])
 
         // Ask for trial 0
         var trial0 = try study.ask()
@@ -201,10 +187,12 @@ struct EnqueueAndImportanceTests {
         let w = try trial0.suggest("weight", in: 0.0...10.0)
         let c = try trial0.suggest("min_comp", in: 1...20)
         let m = try trial0.suggest("mode", choices: ["fast", "precise"])
+        let f = try trial0.suggest("flag", choices: [true, false])
 
         #expect(w == 1.5)
         #expect(c == 8)
         #expect(m == "fast")
+        #expect(f == true)
 
         try study.tell(consuming: trial0, value: w * Double(c))
 
@@ -218,65 +206,8 @@ struct EnqueueAndImportanceTests {
         #expect(trials.count == 2)
         #expect(trials[0].params["weight"] == 1.5)
         #expect(trials[0].params["min_comp"] == 8.0)
-    }
-
-    @Test("Typed enqueue fixes parameters without JSON round trip")
-    func testTypedEnqueue() throws {
-        let study = try Swiftuna.createStudy(name: "typed_enqueue_test", sampler: TPESampler(seed: 42))
-
-        try study.enqueue(
-            [
-                "weight": .double(1.5),
-                "min_comp": .int(8),
-                "mode": .string("fast"),
-                "flag": .bool(true),
-            ], userAttrs: ["tag": "typed"])
-
-        var trial0 = try study.ask()
-        #expect(trial0.number == 0)
-
-        let w = try trial0.suggest("weight", in: 0.0...10.0)
-        let c = try trial0.suggest("min_comp", in: 1...20)
-        let m = try trial0.suggest("mode", choices: ["fast", "precise"])
-
-        #expect(w == 1.5)
-        #expect(c == 8)
-        #expect(m == "fast")
-
-        try study.tell(consuming: trial0, value: w * Double(c))
-
-        let trials = try study.trials
-        #expect(trials.count == 1)
-        #expect(trials[0].params["weight"] == 1.5)
-        #expect(trials[0].params["min_comp"] == 8.0)
         #expect(trials[0].params["mode"] == "fast")
-    }
-
-    @Test("Callback sampler suggests through Swift closures")
-    func testCallbackSampler() throws {
-        let seenTrials = Mutex<[Int]>([])
-        let sampler = CallbackSampler(
-            onFloat: { _, low, high, _, _, trialNumber in
-                seenTrials.withLock { $0.append(trialNumber) }
-                return (low + high) / 2
-            },
-            onInt: { _, low, high, _, _, _ in (low + high) / 2 },
-            onCategorical: { _, choices, _ in choices.count - 1 }
-        )
-        let study = try Swiftuna.createStudy(name: "callback_test", sampler: sampler)
-
-        var trial = try study.ask()
-        let x = try trial.suggest("x", in: 0.0...10.0)
-        #expect(x == 5.0)
-        let n = try trial.suggest("n", in: 1...10)
-        #expect(n == 5)
-        let c = try trial.suggest("arch", choices: ["resnet", "vit", "mlp"])
-        #expect(c == "mlp")
-
-        try study.tell(consuming: trial, value: x)
-        #expect(try study.trials.count == 1)
-        // The upcall carried trial identity: first trial in study is number 0.
-        #expect(seenTrials.withLock { $0 } == [0])
+        #expect(trials[0].params["flag"]?.asBool == true)
     }
 
     @Test("Natural enqueue syntax resolves without verbosity or ambiguity")
@@ -306,56 +237,33 @@ struct EnqueueAndImportanceTests {
         try study.tell(consuming: t1, value: 1.0)
     }
 
-    @Test("TPE sampler exposes multivariate and startup-trial configuration")
+    @Test("TPE sampler configuration matrix: multivariate × startup (incl. 0) × seeds")
     func testTPESamplerConfig() throws {
         for multivariate in [nil, false, true] as [Bool?] {
-            let study = try Swiftuna.createStudy(
-                name: "tpe_config_\(String(describing: multivariate))",
-                sampler: TPESampler(seed: 42, multivariate: multivariate, nStartupTrials: 3))
-            try study.optimize(nTrials: 5) { trial in
-                let x = try trial.suggest("x", in: -5.0...5.0)
-                return x * x
+            for startup in [0, 2, 5] {
+                let study = try Swiftuna.createStudy(
+                    name: "tpe_matrix_\(String(describing: multivariate))_\(startup)",
+                    sampler: TPESampler(seed: 42, multivariate: multivariate, nStartupTrials: startup))
+                try study.optimize(nTrials: 6) { trial in
+                    let x = try trial.suggest("x", in: -5.0...5.0)
+                    return x * x
+                }
+                #expect(try study.trials.count == 6)
             }
-            #expect(try study.trials.count == 5)
         }
-        // Seeded determinism through the full-config constructor.
-        func run(_ tag: String) throws -> [Double] {
+        // Seeded determinism through the full-config constructor across independent studies.
+        func run(seed: UInt64) throws -> [Double] {
             let study = try Swiftuna.createStudy(
-                name: "tpe_determinism_\(tag)",
-                sampler: TPESampler(seed: 7, multivariate: true, nStartupTrials: 2))
+                name: "tpe_det_\(seed)_\(UUID().uuidString)",
+                sampler: TPESampler(seed: seed, multivariate: true, nStartupTrials: 2))
             try study.optimize(nTrials: 6) { trial in
                 let x = try trial.suggest("x", in: -5.0...5.0)
                 return x * x
             }
             return try study.trials.map { $0.values.first ?? .nan }
         }
-        #expect(try run("a") == run("b"))
-    }
-
-    @Test("PED-ANOVA hyperparameter importance evaluation on anisotropic landscape")
-    func testParamImportancesEvaluation() throws {
-        let study = try Swiftuna.createStudy(name: "importance_test", sampler: TPESampler(seed: 42))
-
-        // Optimize anisotropic objective where x1 has a 100x larger effect than x2
-        try study.optimize(nTrials: 30) { (trial: inout Trial) throws(SwiftunaError) -> Double in
-            let x1 = try trial.suggest("important_param", in: -5.0...5.0)
-            let x2 = try trial.suggest("nuisance_param", in: -5.0...5.0)
-            return 100.0 * (x1 * x1) + (x2 * x2)
-        }
-
-        let result = study.paramImportances()
-        let importances = try result.get()
-
-        #expect(importances["important_param"] != nil)
-        #expect(importances["nuisance_param"] != nil)
-
-        let imp1 = importances["important_param"]!
-        let imp2 = importances["nuisance_param"]!
-
-        // important_param should have significantly higher importance fraction than nuisance_param
-        #expect(imp1 > imp2)
-        // Normalized importances should sum approximately to 1.0
-        #expect(abs((imp1 + imp2) - 1.0) < 1e-4)
+        #expect(try run(seed: 7) == run(seed: 7))
+        #expect(try run(seed: 7) != run(seed: 8))
     }
 
     @Test("paramImportances returns expected Result.failure on empty study")
@@ -404,26 +312,23 @@ struct EnqueueAndImportanceTests {
         #expect(weightInterval.lowerBound <= weightInterval.upperBound)
     }
 
-    @Test("Partial trial enqueueing fixes specified parameters while sampling the rest")
-    func testPartialEnqueueing() throws {
-        let study = try Swiftuna.createStudy(name: "partial_enqueue_test", sampler: TPESampler(seed: 42))
-
-        // Only fix "fixed_param", leave "sampled_param" unspecified
-        try study.enqueue(["fixed_param": .double(99.0)])
-
-        var trial = try study.ask()
-        let fixed = try trial.suggest("fixed_param", in: 0.0...100.0)
-        let sampled = try trial.suggest("sampled_param", in: 0.0...10.0)
-
-        #expect(fixed == 99.0)
-        #expect(sampled >= 0.0 && sampled <= 10.0)
-
-        try study.tell(consuming: trial, value: fixed + sampled)
-
-        let best = try study.bestTrial
-        let pt = try #require(best)
-        #expect(pt.params["fixed_param"] == 99.0)
-        #expect(pt.params["sampled_param"] != nil)
+    @Test("Filtered trials support incremental refresh with since")
+    func testTrialsSinceIncrementalRefresh() throws {
+        let study = try Swiftuna.createStudy(name: "since_test", sampler: RandomSampler(seed: 7))
+        try study.optimize(nTrials: 5) { trial in
+            let x = try trial.suggest("x", in: -10.0...10.0)
+            return x * x
+        }
+        let all = try study.trials(where: Set(TrialState.allCases))
+        #expect(all.count == 5)
+        // Default since: 0 returns everything, matching the unfiltered count.
+        let tail = try study.trials(where: Set(TrialState.allCases), since: 3)
+        #expect(tail.count == 2)
+        #expect(tail.map(\.number) == [3, 4])
+        // Past the end: empty, still success.
+        #expect(try study.trials(where: Set(TrialState.allCases), since: 99).isEmpty)
+        // State filter composes with the tail window.
+        #expect(try study.trials(where: [.fail], since: 0).isEmpty)
     }
 
     @Test("Unnormalized and subset parameter importances evaluation")

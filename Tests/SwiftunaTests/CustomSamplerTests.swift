@@ -6,11 +6,21 @@ import Testing
 
 private struct HillClimbSampler: CustomSampler {
     let step: Double
+    // Fixed pseudo-random stream: the convergence test stays reproducible
+    // without touching product code (LCG, values in [-1, 1)).
+    static let draws: [Double] = (0..<400).map { i in
+        var x = UInt64(i) &* 6364136223846793005 &+ 1442695040888963407
+        x ^= x >> 29
+        return Double(x >> 32) / Double(UInt64(1) << 32) * 2.0 - 1.0
+    }
+
     func sample(history: StudyHistory, trialNumber: Int) throws -> [String: ParameterValue] {
+        let draw = Self.draws[(trialNumber * 2) % Self.draws.count]
+        let jitter = Self.draws[(trialNumber * 2 + 1) % Self.draws.count]
         guard let bx = history.best?.params["x"]?.asDouble else {
-            return ["x": .double(Double.random(in: -10.0...10.0))]
+            return ["x": .double(draw * 10.0)]
         }
-        return ["x": .double(min(10.0, max(-10.0, bx + Double.random(in: -step...step))))]
+        return ["x": .double(min(10.0, max(-10.0, bx + jitter * step)))]
     }
 }
 
@@ -165,6 +175,8 @@ struct CustomSamplerTests {
 
     @Test("Reentrant checkout fails loudly instead of deadlocking", .timeLimit(.minutes(1)))
     func testReentrantAskFails() throws {
+        // One shared pair: the closure reads whichever study the current
+        // phase installed. Both phases must observe reentrantAsk.
         let box = Mutex<Study?>(nil)
         let inner = Mutex<SwiftunaError?>(nil)
         let sampler = CallbackSampler(onFloat: { _, _, _, _, _, _ in
@@ -177,58 +189,102 @@ struct CustomSamplerTests {
             } catch {}
             return 1.0
         })
-        let study = try Swiftuna.createStudy(name: "reentrant_\(UUID().uuidString)", sampler: sampler)
+        func expectReentrantAsk(on study: Study) throws {
+            // The upcall below runs on this thread: the nested checkout must
+            // throw, not hang (the time limit guards that).
+            var trial = try study.ask()
+            #expect(try trial.suggest("x", in: -10.0...10.0) == 1.0)
+            try study.tell(consuming: trial, value: 1.0)
+            if case .reentrantAsk = inner.withLock({ $0 }) {} else {
+                Issue.record("expected reentrantAsk, got \(String(describing: inner.withLock { $0 }))")
+            }
+        }
+
+        // Phase 1: original study.
+        let study = try Swiftuna.createStudy(
+            name: "reentrant_\(UUID().uuidString)", sampler: sampler)
         box.withLock { $0 = study }
-        // The upcall below runs on this thread under a held ask slot: the
-        // nested checkout must throw, not hang (the time limit guards that).
-        var trial = try study.ask()
-        #expect(try trial.suggest("x", in: -10.0...10.0) == 1.0)
-        try study.tell(consuming: trial, value: 1.0)
-        if case .reentrantAsk = inner.withLock({ $0 }) {} else {
-            Issue.record("expected reentrantAsk, got \(String(describing: inner.withLock { $0 }))")
-        }
+        try expectReentrantAsk(on: study)
+
+        // Phase 2: the Rust-side sampler (and its live callback context)
+        // travels with copy(to:), so the guard must travel too.
+        inner.withLock { $0 = nil }
+        let study2 = try Swiftuna.createStudy(
+            name: "reentrant_src_\(UUID().uuidString)", sampler: sampler)
+        let copy = try study2.copy(to: .inMemory, as: "reentrant_copy_\(UUID().uuidString)")
+        box.withLock { $0 = copy }
+        try expectReentrantAsk(on: copy)
     }
 
-    @Test("Callback int and categorical closures drive suggestions")
-    func testCallbackIntAndCategorical() throws {
-        let sampler = CallbackSampler(
-            onInt: { _, _, _, _, _, _ in 32 },
-            onCategorical: { _, _, _ in 1 }
+    @Test("Callback sampler table: kinds × valid/nil × trial identity")
+    func testCallbackSamplerTable() throws {
+        // Phase 1: Valid values are suggested and trialNumber is forwarded identically.
+        let seenFloats = Mutex<[Int]>([])
+        let seenInts = Mutex<[Int]>([])
+        let seenCats = Mutex<[Int]>([])
+        let validSampler = CallbackSampler(
+            onFloat: { _, low, high, _, _, trialNumber in
+                seenFloats.withLock { $0.append(trialNumber) }
+                return (low + high) / 2
+            },
+            onInt: { _, low, high, _, _, trialNumber in
+                seenInts.withLock { $0.append(trialNumber) }
+                return (low + high) / 2
+            },
+            onCategorical: { _, choices, trialNumber in
+                seenCats.withLock { $0.append(trialNumber) }
+                return choices.count - 1
+            }
         )
-        let study = try Swiftuna.createStudy(name: "cb_intcat_\(UUID().uuidString)", sampler: sampler)
+        let study = try Swiftuna.createStudy(name: "cb_table_\(UUID().uuidString)", sampler: validSampler)
         try study.optimize(nTrials: 3) { trial in
-            let n = try trial.suggest("n", in: 1...64)
-            #expect(n == 32)
-            let opt = try trial.suggest("opt", choices: ["adam", "sgd"])
-            #expect(opt == "sgd")
-            return Double(n)
+            let f = try trial.suggest("f", in: 0.0...10.0)
+            let i = try trial.suggest("i", in: 10...30)
+            let c = try trial.suggest("c", choices: ["low", "high"])
+            #expect(f == 5.0)
+            #expect(i == 20)
+            #expect(c == "high")
+            return f + Double(i)
         }
-        #expect(try study.trials.count == 3)
+        #expect(seenFloats.withLock { $0 } == [0, 1, 2])
+        #expect(seenInts.withLock { $0 } == [0, 1, 2])
+        #expect(seenCats.withLock { $0 } == [0, 1, 2])
+
+        // Phase 2: Refusing (nil) fails immediately across all three kinds without hanging.
+        let refusingSampler = CallbackSampler(
+            onFloat: { _, _, _, _, _, _ in nil },
+            onInt: { _, _, _, _, _, _ in nil },
+            onCategorical: { _, _, _ in nil }
+        )
+        let failStudy = try Swiftuna.createStudy(name: "cb_fail_\(UUID().uuidString)", sampler: refusingSampler)
+        var t1 = try failStudy.ask()
+        #expect(throws: SwiftunaError.self) { try t1.suggest("f", in: 0.0...10.0) }
+        var t2 = try failStudy.ask()
+        #expect(throws: SwiftunaError.self) { try t2.suggest("i", in: 1...10) }
+        var t3 = try failStudy.ask()
+        #expect(throws: SwiftunaError.self) { try t3.suggest("c", choices: ["a", "b"]) }
+
+        // Phase 3: Partial fallback - omitted closures fall back to uniform sampling.
+        let partialSampler = CallbackSampler(onFloat: { _, low, high, _, _, _ in (low + high) / 2 })
+        let fallbackStudy = try Swiftuna.createStudy(name: "cb_fb_\(UUID().uuidString)", sampler: partialSampler)
+        try fallbackStudy.optimize(nTrials: 3) { trial in
+            let f = try trial.suggest("f", in: 0.0...10.0)
+            #expect(f == 5.0)
+            let i = try trial.suggest("i", in: 1...10)
+            #expect((1...10).contains(i))
+            return f
+        }
     }
 
-    @Test("Kinds without a closure fall back to uniform random")
-    func testCallbackPartialFallback() throws {
-        let sampler = CallbackSampler(onFloat: { _, low, high, _, _, _ in (low + high) / 2 })
-        let study = try Swiftuna.createStudy(name: "cb_fallback_\(UUID().uuidString)", sampler: sampler)
-        try study.optimize(nTrials: 5) { trial in
-            let x = try trial.suggest("x", in: -10.0...10.0)
-            #expect(x == 0.0) // midpoint closure
-            let n = try trial.suggest("n", in: 1...64) // engine-sampled
-            #expect((1...64).contains(n))
-            let opt = try trial.suggest("opt", choices: ["adam", "sgd"]) // engine-sampled
-            #expect(["adam", "sgd"].contains(opt))
-            return x + Double(n)
-        }
-        #expect(try study.trials.count == 5)
-    }
-
-    @Test("Callback returning nil fails the suggestion as a sampler error")
-    func testCallbackNilFails() throws {
-        let sampler = CallbackSampler(onFloat: { _, _, _, _, _, _ in nil })
-        let study = try Swiftuna.createStudy(name: "cb_nil_\(UUID().uuidString)", sampler: sampler)
+    @Test("Callback categorical closure rejects NUL-containing labels loudly")
+    func testCallbackNulLabelFails() throws {
+        let sampler = CallbackSampler(onCategorical: { _, choices, _ in 0 })
+        let study = try Swiftuna.createStudy(name: "cb_nul_\(UUID().uuidString)", sampler: sampler)
         var trial = try study.ask()
+        // Label containing an embedded NUL cannot cross the C ABI and must fail
+        // with samplerError instead of silently truncating.
         #expect(throws: SwiftunaError.self) {
-            try trial.suggest("x", in: -10.0...10.0)
+            try trial.suggest("opt", choices: ["clean", "embed\0nul"])
         }
     }
 
@@ -289,33 +345,6 @@ struct CustomSamplerTests {
         }
         #expect(scanned?.number == 2)
         #expect(folded?.number == 2)
-    }
-
-    @Test("Copied callback study keeps the reentrancy guard")
-    func testCopiedStudyKeepsReentrancyGuard() throws {
-        let box = Mutex<Study?>(nil)
-        let inner = Mutex<SwiftunaError?>(nil)
-        let sampler = CallbackSampler(onFloat: { _, _, _, _, _, _ in
-            do {
-                if let study = box.withLock({ $0 }) {
-                    _ = try study.ask()
-                }
-            } catch let error as SwiftunaError {
-                inner.withLock { $0 = error }
-            } catch {}
-            return 1.0
-        })
-        let study = try Swiftuna.createStudy(name: "reentrant_src_\(UUID().uuidString)", sampler: sampler)
-        // The Rust-side sampler (and its live callback context) travels with
-        // the copy, so the guard must travel too.
-        let copy = try study.copy(to: .inMemory, as: "reentrant_copy_\(UUID().uuidString)")
-        box.withLock { $0 = copy }
-        var trial = try copy.ask()
-        #expect(try trial.suggest("x", in: -10.0...10.0) == 1.0)
-        try copy.tell(consuming: trial, value: 1.0)
-        if case .reentrantAsk = inner.withLock({ $0 }) {} else {
-            Issue.record("expected reentrantAsk, got \(String(describing: inner.withLock { $0 }))")
-        }
     }
 
     @Test("Custom driver stops cleanly when the grid is exhausted")

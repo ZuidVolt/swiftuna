@@ -258,6 +258,10 @@ public struct Trial: ~Copyable {
             return String(describing: choice)
         }
 
+        if stringChoices.contains(where: { $0.contains("\0") }) {
+            throw SwiftunaError.samplerError("Choice label for parameter '\(name)' contains a NUL byte")
+        }
+
         let status = name.withCString { cName in
             withCStrings(stringChoices) { buf in
                 rustuna_trial_suggest_categorical(

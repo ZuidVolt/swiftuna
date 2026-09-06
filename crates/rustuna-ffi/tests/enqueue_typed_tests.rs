@@ -37,9 +37,9 @@ fn typed_enqueue_fixes_all_kinds() {
     assert_eq!(suggest_float(trial, "x", -10.0, 10.0), 2.5);
     assert_eq!(suggest_int(trial, "n", 1, 64), 32);
     assert_eq!(suggest_categorical(trial, "opt", &["adam", "sgd"]), 1);
+    assert_eq!(suggest_categorical(trial, "flag", &["false", "true"]), 1);
     rustuna_trial_free(trial);
     rustuna_study_free(study);
-    let _ = n_f;
 }
 
 #[test]

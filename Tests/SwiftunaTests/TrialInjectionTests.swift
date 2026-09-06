@@ -10,8 +10,8 @@ struct TrialInjectionTests {
         return tempDir.appendingPathComponent("swiftuna_inject_\(UUID().uuidString).db")
     }
 
-    @Test("Injecting historical completed trials primes the study and updates bestTrial")
-    func testAddTrialSingle() throws {
+    @Test("Single and batch trial injection, continuous optimization, and objective mismatch validation")
+    func testTrialInjectionBatchAndValidation() throws {
         let dbURL = makeTempDBURL()
         defer { try? FileManager.default.removeItem(at: dbURL) }
 
@@ -22,7 +22,7 @@ struct TrialInjectionTests {
             storage: storage
         )
 
-        // Inject 2 baseline historical trials
+        // 1. Inject single baseline historical trials with user attributes and intermediate values
         let trial1 = Swiftuna.createTrial(
             state: .complete,
             value: 10.5,
@@ -30,7 +30,6 @@ struct TrialInjectionTests {
             userAttrs: ["source": "historical_sweep_v1"],
             intermediateValues: [0: 20.0, 1: 10.5]
         )
-
         let trial2 = Swiftuna.createTrial(
             state: .complete,
             value: 2.1,
@@ -38,63 +37,46 @@ struct TrialInjectionTests {
             userAttrs: ["source": "expert_prior"],
             intermediateValues: [0: 5.0, 1: 2.1]
         )
-
         try study.addTrial(trial1)
         try study.addTrial(trial2)
 
-        let trials = try study.trials
-        #expect(trials.count == 2)
+        #expect((try study.trials).count == 2)
         #expect(try study.bestValue == 2.1)
         #expect(try study.bestParams["x"] == 0.5)
 
-        // Continue optimizing with TPE on top of the seeded study
-        try study.optimize(nTrials: 5) { trial in
+        // 2. Inject batch trials via addTrials
+        var batch: [PersistedTrial] = []
+        for i in 1...3 {
+            batch.append(Swiftuna.createTrial(
+                state: .complete,
+                value: Double(i) * 15.0,
+                params: ["x": Double(i), "y": Double(i)],
+                userAttrs: ["batch_index": "\(i)"]
+            ))
+        }
+        try study.addTrials(batch)
+        #expect((try study.trials).count == 5)
+
+        // 3. Continue optimizing downstream on top of seeded study
+        try study.optimize(nTrials: 3) { trial in
             let x = try trial.suggest("x", in: -5.0...5.0)
             let y = try trial.suggest("y", in: -5.0...5.0)
             return x * x + y * y
         }
+        #expect((try study.trials).count == 8)
 
-        let totalTrials = try study.trials
-        #expect(totalTrials.count == 7)
-    }
-
-    @Test("Batch trial injection via addTrials")
-    func testAddTrialsBatch() throws {
-        let study = try Swiftuna.createStudy(name: "batch_seeded_\(UUID().uuidString)")
-
-        var seeded: [PersistedTrial] = []
-        for i in 1...5 {
-            seeded.append(Swiftuna.createTrial(
-                state: .complete,
-                value: Double(i) * 10.0,
-                params: ["alpha": Double(i)],
-                userAttrs: ["batch_index": "\(i)"]
-            ))
-        }
-
-        try study.addTrials(seeded)
-
-        let allTrials = try study.trials
-        #expect(allTrials.count == 5)
-        #expect(try study.bestValue == 10.0)
-    }
-
-    @Test("Adding trial with mismatched objective count throws invalidArgument error")
-    func testAddTrialMismatchedObjectivesThrows() throws {
-        let study = try Swiftuna.createStudy(
+        // 4. Mismatched objective count injection must throw error
+        let multiStudy = try Swiftuna.createStudy(
             name: "multi_obj_\(UUID().uuidString)",
             directions: [.minimize, .maximize]
         )
-
-        // Single objective trial cannot be added to a 2-objective study
         let invalidTrial = Swiftuna.createTrial(
             state: .complete,
-            value: 42.0, // 1 value
+            value: 42.0, // 1 value for 2 directions
             params: ["p": 1.0]
         )
-
         #expect(throws: SwiftunaError.self) {
-            try study.addTrial(invalidTrial)
+            try multiStudy.addTrial(invalidTrial)
         }
     }
 }

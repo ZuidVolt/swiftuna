@@ -48,31 +48,27 @@ struct DistributionPropertyTests {
         }
     }
 
-    @Test("Categorical suggestions always choose an existing element from choices")
-    func testCategoricalChoicesContainment() async throws {
+    @Test("Categorical suggestions strictly adhere to choice containment and reject empty choices")
+    func testCategoricalChoicesInvariants() async throws {
         let choices = ["alpha", "beta", "gamma", "delta", "epsilon"]
-        await propertyCheck(input: Gen<Int>.int(in: 1...5)) { n in
+        await propertyCheck(input: Gen<Int>.int(in: 0...5)) { n in
             do {
                 let subChoices = Array(choices.prefix(n))
                 let study = try Swiftuna.createStudy(direction: .minimize)
                 var trial = try study.ask()
-                let chosen = try trial.suggest("opt", choices: subChoices)
-                try study.tell(consuming: trial, value: 1.0)
 
-                #expect(subChoices.contains(chosen))
+                if n == 0 {
+                    #expect(throws: SwiftunaError.self) {
+                        _ = try trial.suggest("opt", choices: subChoices)
+                    }
+                } else {
+                    let chosen = try trial.suggest("opt", choices: subChoices)
+                    try study.tell(consuming: trial, value: 1.0)
+                    #expect(subChoices.contains(chosen))
+                }
             } catch {
                 Issue.record("Unexpected categorical suggestion failure: \(error)")
             }
-        }
-    }
-
-    @Test("Empty categorical choices cleanly throw error without crashing")
-    func testEmptyCategoricalChoices() async throws {
-        let empty: [String] = []
-        let study = try Swiftuna.createStudy(direction: .minimize)
-        var trial = try study.ask()
-        #expect(throws: SwiftunaError.self) {
-            _ = try trial.suggest("empty", choices: empty)
         }
     }
 }

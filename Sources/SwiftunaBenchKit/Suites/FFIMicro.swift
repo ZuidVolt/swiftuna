@@ -5,19 +5,21 @@ internal import LibRustuna
 
 /// FFI micro-op suite: each layer measured natively (Rust, in-process) and
 /// from Swift, so the Swift-minus-native delta isolates exactly one cost —
-/// FFI transition, JSON serialization, or Swift glue. Requires the expanded
-/// bench FFI, so the compare tool skips this suite on older branches.
+/// FFI transition, JSON serialization, Swift glue, or (callback rows) the
+/// per-suggest upcall machinery. Requires the expanded bench FFI, so the
+/// compare tool skips this suite on older branches.
 public struct FFIMicroSuite: BenchSuite {
     public init() {}
 
     public var name: String { "ffi" }
-    public var description: String { "Swift-vs-native per micro-op: ask/tell, suggest, enqueue, fetch" }
+    public var description: String { "Swift-vs-native per micro-op: ask/tell, suggest, callback, enqueue, fetch" }
     public var requiresNewAPI: Bool { true }
     public var metricNames: [String] {
         ["ffi_asktell_sw_us", "ffi_asktell_rs_us",
          "ffi_suggest_sw_us_1", "ffi_suggest_rs_us_1",
          "ffi_suggest_sw_us_4", "ffi_suggest_rs_us_4",
          "ffi_suggest_sw_us_8", "ffi_suggest_rs_us_8",
+         "ffi_callback_sw_us_1", "ffi_callback_sw_us_4", "ffi_callback_sw_us_8",
          "ffi_enqueue_sw_us", "ffi_enqueue_rs_us",
          "ffi_fetch_sw_us", "ffi_fetch_rs_us"]
     }
@@ -30,6 +32,12 @@ public struct FFIMicroSuite: BenchSuite {
         for k in [1, 4, 8] {
             probes.append(("ffi_suggest_sw_us_\(k)", "us", { try ffiSuggestSwift(trials: 200, params: k) }))
             probes.append(("ffi_suggest_rs_us_\(k)", "us", { try ffiSuggestNative(trials: 200, params: k) }))
+        }
+        // Callback rows have no native twin: the native random suggest IS the
+        // baseline, and the delta is the whole upcall (transition +
+        // trampoline + Swift closure). Fixed midpoint keeps closure work nil.
+        for k in [1, 4, 8] {
+            probes.append(("ffi_callback_sw_us_\(k)", "us", { try ffiCallbackSwift(trials: 200, params: k) }))
         }
         probes += [
             ("ffi_enqueue_sw_us", "us", { try ffiEnqueueSwift(calls: 1000) }),
@@ -91,6 +99,24 @@ private func ffiSuggestNative(trials n: Int, params k: Int) throws -> Double {
     var ns: UInt64 = 0
     try checkBench(rustuna_bench_suggest(n, k, 42, &ns), "rustuna_bench_suggest")
     return Double(ns) / 1_000.0
+}
+
+private func ffiCallbackSwift(trials n: Int, params k: Int) throws -> Double {
+    let sampler = CallbackSampler(onFloat: { _, low, high, _, _, _ in (low + high) / 2 })
+    let study = try createStudy(name: "ffi_cb_\(UUID().uuidString)", direction: .minimize,
+                                sampler: sampler)
+    let start = DispatchTime.now()
+    for _ in 0..<n {
+        var t = try study.ask()
+        var v = 0.0
+        for p in 0..<k {
+            let x = try t.suggest("p\(p)", in: -10.0...10.0)
+            v += (x - 2.0) * (x - 2.0)
+        }
+        try study.tell(consuming: t, value: v)
+    }
+    let nanos = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+    return Double(nanos) / 1_000.0 / Double(n * k)
 }
 
 private func ffiEnqueueSwift(calls n: Int) throws -> Double {
