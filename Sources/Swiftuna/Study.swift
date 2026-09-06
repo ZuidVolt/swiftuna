@@ -1,8 +1,6 @@
 internal import Foundation
 internal import LibRustuna
-#if compiler(>=6.4)
 internal import Synchronization
-#endif
 
 /// Manages trial limits and monotonic execution deadlines for optimization loops.
 internal struct OptimizationBudget: Sendable {
@@ -151,7 +149,6 @@ public final class Study: @unchecked Sendable {
         return Trial(raw: trialPtr, study: self)
     }
 
-    #if compiler(>=6.4)
     /// Serializes enqueue-then-ask pairs across drivers sharing this study using Swift 6 Synchronization.Mutex.
     ///
     /// Under SE-0413 (Full Typed Throws), `Mutex.withLock` requires an explicit
@@ -160,15 +157,6 @@ public final class Study: @unchecked Sendable {
     /// The non-copyable return type `Trial: ~Copyable` is inferred automatically.
     /// The critical section holds two FFI calls and never the evaluation.
     private let askSlot = Mutex(())
-    #else
-    /// Serializes enqueue-then-ask pairs across drivers sharing this study using NSLock fallback for Swift < 6.4.
-    ///
-    /// Plain `NSLock`: `Synchronization.Mutex.withLock` without explicit closure error
-    /// typing erases throws to `any Error`, which does not compose with this file's
-    /// typed `throws(SwiftunaError)` — the lock/unlock pair keeps error types exact.
-    /// The critical section holds two FFI calls and never the evaluation.
-    private let askSlot = NSLock()
-    #endif
 
     /// Checks out the next trial with `params` fixed, atomically.
     ///
@@ -201,17 +189,10 @@ public final class Study: @unchecked Sendable {
 
     func askEnqueued(_ params: [String: ParameterValue]) throws(SwiftunaError) -> Trial {
         try checkNotInCallback()
-        #if compiler(>=6.4)
         return try askSlot.withLock { (_: inout ()) throws(SwiftunaError) in
             try enqueue(params)
             return try ask()
         }
-        #else
-        askSlot.lock()
-        defer { askSlot.unlock() }
-        try enqueue(params)
-        return try ask()
-        #endif
     }
 
     /// Finishes a trial created with ``ask()``, recording its objective value and final state.
