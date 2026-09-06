@@ -210,12 +210,12 @@ public struct NoOpTelemetrySpan: TelemetrySpan {
     @inline(always) public func end(status: SpanStatus) {}
     @inline(always) public var traceParent: String? { nil }
     @inline(always) public func traceChild(name: String, attributes: [String: String]) -> any TelemetrySpan {
-        NoOpTelemetrySpan()
+        Self()
     }
     @inline(always) public func traceChild(
         name: String, attributes: [String: TelemetryAttribute]
     ) -> any TelemetrySpan {
-        NoOpTelemetrySpan()
+        Self()
     }
 }
 
@@ -296,6 +296,23 @@ public final class SwiftunaTelemetry: Sendable {
     ) -> (any TelemetrySpan)? {
         guard isEnabled else { return nil }
         return tracer.startSpan(name: name, attributes: attributes(), parent: parent)
+    }
+
+    /// Opens a `swiftuna.trial` span with the canonical trial attributes.
+    ///
+    /// Single construction site for the local and custom-driver loops, so key
+    /// presence and types can never drift between them.
+    public func trialSpan(study studyName: String, trialNumber: Int, distributed: Bool) -> (any TelemetrySpan)? {
+        span(
+            name: "swiftuna.trial",
+            attributes: [
+                "study.name": .string(studyName),
+                "trial.number": .int(trialNumber),
+                // Explicit bool, never absent: backend queries filter on
+                // this key, and absence must not mean anything.
+                "trial.distributed": .bool(distributed),
+            ]
+        )
     }
 
     /// The currently active tracer, or ``NoOpTelemetryTracer`` if none is registered.

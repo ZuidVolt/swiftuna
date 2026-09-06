@@ -55,7 +55,7 @@ Suggest Float rates and stepped Int widths so tensor shapes stay aligned. Genera
 Warm the surrogate with a known good config. TPE builds its density models from finished trials, so the first trials are close to random. Handing it one solid point up front, a learning rate and width you already trust, gives every later suggestion something to improve on. Each GPU epoch is expensive, and a blind opening round is the easiest place to waste them.
 
 ```swift
-try study.enqueue(["lr": 0.01, "hidden_dim": 32])
+try study.enqueue(["lr": .double(0.01), "hidden_dim": .int(32)])
 try study.optimize(nTrials: 50) { trial in /* ... */ }
 ```
 

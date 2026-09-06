@@ -19,7 +19,7 @@ extension ConstraintKey {
 @Suite("Constrained Optimization & Feasibility Invariant Tests")
 struct ConstrainedOptimizationTests {
 
-    @Test("Active trial sets single, batch, and type-safe constraints with accurate read-back")
+    @Test("Active trial constraint validation, type-safe registration, and persistent read-back")
     func testConstraintSettingAndReadback() throws {
         let study = try Swiftuna.createStudy(
             name: "test_constraints_basic_\(UUID().uuidString)"
@@ -34,6 +34,16 @@ struct ConstrainedOptimizationTests {
         // String-keyed constraint
         try trial.setConstraint("power_budget", value: 1.2)  // Infeasible
 
+        // Duplicate constraint key throws error
+        #expect(throws: SwiftunaError.self) {
+            try trial.setConstraint("power_budget", value: 0.0)
+        }
+
+        // Non-finite constraint values throw invalidArgument error
+        #expect(throws: SwiftunaError.self) {
+            try trial.setConstraint("bad_nan", value: Double.nan)
+        }
+
         #expect(trial.constraints["max_latency"] == -2.5)
         #expect(trial.constraints["power_budget"] == 1.2)
 
@@ -44,38 +54,6 @@ struct ConstrainedOptimizationTests {
         #expect(persisted.constraints["power_budget"] == 1.2)
         #expect(persisted[MaxLatency.self] == -2.5)
         #expect(!persisted.isFeasible)  // Because power_budget is > 0.0
-    }
-
-    @Test("Duplicate constraint key throws attrOverwriteNotAllowed error")
-    func testDuplicateConstraintThrows() throws {
-        let study = try Swiftuna.createStudy(
-            name: "test_constraints_dup_\(UUID().uuidString)"
-        )
-
-        var trial = try study.ask()
-        try trial.setConstraint("c1", value: 0.0)
-
-        #expect(throws: SwiftunaError.self) {
-            try trial.setConstraint("c1", value: 1.0)
-        }
-
-        // Clean up trial
-        try study.tell(consuming: trial, value: 0.0)
-    }
-
-    @Test("NaN constraint value throws invalidArgument error")
-    func testNaNConstraintThrows() throws {
-        let study = try Swiftuna.createStudy(
-            name: "test_constraints_nan_\(UUID().uuidString)"
-        )
-
-        var trial = try study.ask()
-
-        #expect(throws: SwiftunaError.self) {
-            try trial.setConstraint("bad_nan", value: Double.nan)
-        }
-
-        try study.tell(consuming: trial, value: 1.0)
     }
 
     @Test("Feasibility partitioning and functional pipeline helpers")

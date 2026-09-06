@@ -40,20 +40,32 @@ package-binaries:
 package-binaries-check:
     python3 Tools/package-binaries.py --check
 
-bench: build-ffi-release
-    swift run -c release SwiftunaBench
+# Compare main against the current branch on shared suites (worktrees +
+# overlay + interleaving). Exits 0 pass, 1 regression, 2 inconclusive.
+# Refuses same-commit compares (exit 0) unless args="--force"; a dirty tree
+# is measured as-is against its own HEAD.
+bench-compare suite="hot" reps="5" args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    other=$(git branch --show-current)
+    if [ -z "$other" ]; then other=HEAD; fi
+    swift run -c release SwiftunaBench compare main "$other" --suite {{suite}} --reps {{reps}} {{args}}
 
-microbench: build-ffi-release
-    swift run -c release --package-path tmp_microbench
+# Run the push-gate suite on the current branch.
+bench-gates reps="5":
+    swift run -c release SwiftunaBench run --suite hot --reps {{reps}}
 
 migrate-check:
     swift run SwiftunaMigrator
 
 clean:
+    rm -rf .bench-worktrees/
     cargo clean --manifest-path crates/rustuna-ffi/Cargo.toml
     swift package clean
 
+
 reset:
+    rm -rf .bench-worktrees/
     rm -rf .build Package.resolved
     swift package reset
     swift package resolve

@@ -102,75 +102,26 @@ struct TimingAndTelemetryTests {
         }
     }
 
-    @Test("Custom TelemetryTracer captures trial spans and metadata without external dependencies")
-    func testTelemetryTracingIntegration() throws {
-        let studyName = "telemetry_study_\(UUID().uuidString)"
+    @Test("Custom TelemetryTracer captures complete trial lifecycle, events, pruner spans, and pruned state")
+    func testTelemetryTracingLifecycle() throws {
+        let studyName = "telemetry_lifecycle_\(UUID().uuidString)"
         let mockTracer = MockTracer()
         SwiftunaTelemetry.shared.registerTracer(mockTracer)
         defer { SwiftunaTelemetry.shared.registerTracer(nil) }
 
         let study = try Swiftuna.createStudy(name: studyName)
 
-        try study.optimize(nTrials: 2) { trial in
-            _ = try trial.suggest("x", in: 0.0...1.0)
-            return 3.14
-        }
-
-        let relevantSpans = mockTracer.spans.filter { $0.attributes["study.name"] == studyName }
-        #expect(relevantSpans.count == 2)
-        let firstSpan = relevantSpans[0]
-        #expect(firstSpan.name == "swiftuna.trial")
-        #expect(firstSpan.attributes["study.name"] == studyName)
-        #expect(firstSpan.attributes["trial.number"] == "0")
-        #expect(firstSpan.attributes["trial.status"] == "complete")
-        #expect(firstSpan.attributes["trial.duration_ms"] != nil)
-        // Raw double form: parses back regardless of device locale.
-        #expect(Double(firstSpan.attributes["trial.duration_ms"] ?? "") != nil)
-        #expect(firstSpan.attributes["param.x"] != nil)
-        #expect(firstSpan.isEnded == true)
-        #expect(firstSpan.status == .ok)
-    }
-
-    @Test("Report heartbeats and pruner votes land on the trial span as events")
-    func testReportAndPruneVoteEvents() throws {
-        let studyName = "telemetry_events_\(UUID().uuidString)"
-        let mockTracer = MockTracer()
-        SwiftunaTelemetry.shared.registerTracer(mockTracer)
-        defer { SwiftunaTelemetry.shared.registerTracer(nil) }
-
-        let study = try Swiftuna.createStudy(name: studyName)
-
+        // Trial 0: Completed trial with report events and pruner evaluation
         try study.optimize(nTrials: 1) { trial in
             let x = try trial.suggest("x", in: 0.0...1.0)
             for step in 0..<3 {
                 try trial.report(x * Double(step), step: step)
             }
             _ = try trial.shouldPrune
-            return x
+            return 3.14
         }
 
-        let relevantSpans = mockTracer.spans.filter { $0.attributes["study.name"] == studyName }
-        let span = try #require(relevantSpans.first)
-        let reports = span.events.filter { $0.name == "trial.report" }
-        #expect(reports.count == 3)
-        #expect(reports.first?.attributes["trial.step"] == "0")
-        let votes = span.events.filter { $0.name == "trial.prune_vote" }
-        #expect(votes.count == 1)
-        let prunerSpans = span.children.filter { $0.name == "swiftuna.pruner" }
-        #expect(prunerSpans.count == 1)
-        #expect(prunerSpans.first?.isEnded == true)
-        #expect(prunerSpans.first?.attributes["trial.prune_vote"] != nil)
-    }
-
-    @Test("Pruned trials carry sampled params on the span")
-    func testPrunedTrialSpanCarriesParams() throws {
-        let studyName = "telemetry_pruned_params_\(UUID().uuidString)"
-        let mockTracer = MockTracer()
-        SwiftunaTelemetry.shared.registerTracer(mockTracer)
-        defer { SwiftunaTelemetry.shared.registerTracer(nil) }
-
-        let study = try Swiftuna.createStudy(name: studyName)
-
+        // Trial 1: Pruned trial with sampled parameters
         try study.optimize(nTrials: 1) { trial in
             _ = try trial.suggest("x", in: 0.0...1.0)
             _ = try trial.suggest("layers", in: 1...4)
@@ -178,10 +129,38 @@ struct TimingAndTelemetryTests {
         }
 
         let relevantSpans = mockTracer.spans.filter { $0.attributes["study.name"] == studyName }
-        let span = try #require(relevantSpans.first)
-        #expect(span.attributes["trial.status"] == "pruned")
-        #expect(span.attributes["param.x"] != nil)
-        #expect(span.attributes["param.layers"] != nil)
-        #expect(span.isEnded == true)
+        #expect(relevantSpans.count == 2)
+
+        // Verify Trial 0 span
+        let t0Span = relevantSpans[0]
+        #expect(t0Span.name == "swiftuna.trial")
+        #expect(t0Span.attributes["study.name"] == studyName)
+        #expect(t0Span.attributes["trial.number"] == "0")
+        #expect(t0Span.attributes["trial.status"] == "complete")
+        #expect(t0Span.attributes["param.x"] != nil)
+        #expect(Double(t0Span.attributes["trial.duration_ms"] ?? "") != nil)
+        #expect(t0Span.isEnded == true)
+        #expect(t0Span.status == .ok)
+
+        let reports = t0Span.events.filter { $0.name == "trial.report" }
+        #expect(reports.count == 3)
+        #expect(reports.first?.attributes["trial.step"] == "0")
+
+        let votes = t0Span.events.filter { $0.name == "trial.prune_vote" }
+        #expect(votes.count == 1)
+
+        let prunerSpans = t0Span.children.filter { $0.name == "swiftuna.pruner" }
+        #expect(prunerSpans.count == 1)
+        #expect(prunerSpans.first?.isEnded == true)
+        #expect(prunerSpans.first?.attributes["trial.prune_vote"] != nil)
+
+        // Verify Trial 1 span (pruned)
+        let t1Span = relevantSpans[1]
+        #expect(t1Span.attributes["study.name"] == studyName)
+        #expect(t1Span.attributes["trial.number"] == "1")
+        #expect(t1Span.attributes["trial.status"] == "pruned")
+        #expect(t1Span.attributes["param.x"] != nil)
+        #expect(t1Span.attributes["param.layers"] != nil)
+        #expect(t1Span.isEnded == true)
     }
 }

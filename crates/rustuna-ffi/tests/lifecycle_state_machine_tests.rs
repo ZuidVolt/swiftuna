@@ -223,7 +223,7 @@ proptest! {
         let attr_key = CString::new("batch_size").unwrap();
         let attr_val = CString::new("64").unwrap();
 
-        for (_idx, outcome) in outcomes.iter().enumerate() {
+        for outcome in outcomes.iter() {
             let mut trial: *mut RustunaTrial = ptr::null_mut();
             prop_assert_eq!(rustuna_study_ask(study, &mut trial), 0);
             let mut alpha = 0.0f64;
@@ -267,7 +267,7 @@ proptest! {
         // 2. Fetch batched JSON array
         let mut batch_json_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         let mut batch_len = 0usize;
-        prop_assert_eq!(rustuna_study_get_trials_json(study, mask, &mut batch_json_ptr, &mut batch_len), 0);
+        prop_assert_eq!(rustuna_study_get_trials_json_since(study, mask, 0, &mut batch_json_ptr, &mut batch_len), 0);
         prop_assert!(!batch_json_ptr.is_null());
 
         unsafe {
