@@ -83,10 +83,10 @@ void rustuna_sampler_free(RustunaSampler* sampler);
  * Callbacks run synchronously on the optimizing thread and may run
  * concurrently across threads: the foreign side must synchronize its state.
  */
-typedef int32_t (*RustunaSuggestFloatFn)(void* ctx, const char* name, double low, double high,
-                                         double step, bool log, uint32_t trial_number, double* out_value);
-typedef int32_t (*RustunaSuggestIntFn)(void* ctx, const char* name, int64_t low, int64_t high,
-                                       int64_t step, bool log, uint32_t trial_number, int64_t* out_value);
+typedef int32_t (*RustunaSuggestFloatFn)(void* ctx, const char* name, double low, double high, double step, bool log,
+                                         uint32_t trial_number, double* out_value);
+typedef int32_t (*RustunaSuggestIntFn)(void* ctx, const char* name, int64_t low, int64_t high, int64_t step, bool log,
+                                       uint32_t trial_number, int64_t* out_value);
 typedef int32_t (*RustunaSuggestCategoricalFn)(void* ctx, const char* name, const char* const* choices,
                                                size_t choices_count, uint32_t trial_number, size_t* out_index);
 /**
@@ -191,8 +191,15 @@ void rustuna_trial_free(RustunaTrial* trial);
 int32_t rustuna_persisted_trial_get_json(const RustunaPersistedTrial* trial, char** out_json);
 void rustuna_persisted_trial_free(RustunaPersistedTrial* trial);
 
-// In-process benchmark (no subprocess fork)
+// In-process benchmarks (no subprocess fork). Each returns 0 and sets its
+// out-pointer to nanoseconds per unit, non-zero otherwise. Swift-side twins
+// live in SwiftunaBenchKit's ffi suite; the Swift-minus-native delta on each
+// metric isolates one layer (FFI transition, JSON serialization, Swift glue).
 int32_t rustuna_bench_e2e(size_t n_trials, uint64_t seed, bool use_random_sampler, uint64_t* out_ns_per_trial);
+int32_t rustuna_bench_ask_tell(size_t n_trials, uint64_t seed, uint64_t* out_ns_per_trial);
+int32_t rustuna_bench_suggest(size_t n_trials, size_t n_params, uint64_t seed, uint64_t* out_ns_per_suggest);
+int32_t rustuna_bench_enqueue(size_t n_calls, uint64_t* out_ns_per_call);
+int32_t rustuna_bench_fetch(size_t n_trials, size_t repeats, uint64_t* out_ns_per_trial);
 
 #ifdef __cplusplus
 }

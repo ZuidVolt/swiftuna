@@ -2507,6 +2507,35 @@ pub extern "C" fn rustuna_study_add_trial_json(
 
 // MARK: - In-process microbenchmarks (no subprocess fork)
 
+/// Fresh seeded bench study shared by the in-process benchmarks below.
+///
+/// Setup cannot fail short of OOM (the name is always fresh), so this maps
+/// straight to an error code like every other entry point. Returns the
+/// storage handle too: the fetch bench re-locks it for its timed loop.
+fn bench_study(seed: u64, use_random_sampler: bool) -> Result<(Study, Arc<RwLock<dyn Storage>>), i32> {
+    let sampler: Arc<dyn Sampler> = if use_random_sampler {
+        Arc::new(RandomSampler::seed_from_u64(seed))
+    } else {
+        Arc::new(TpeSampler::seed_from_u64(seed))
+    };
+    let storage: Arc<RwLock<dyn Storage>> = Arc::new(RwLock::new(InMemoryStorage::new()));
+    let study = create_study_with_arc("bench", storage.clone(), sampler, vec![Direction::Minimize])
+        .map_err(|e| set_rustuna_error(&e))?;
+    Ok((study, storage))
+}
+
+/// Maps a bench closure's outcome the same way everywhere: codes pass
+/// through, panics become -99 with the bench name attached.
+fn finish_bench(name: &'static str, res: std::thread::Result<i32>) -> i32 {
+    match res {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(-99, format!("Panic in {name}: {e:?}"));
+            -99
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rustuna_bench_e2e(
     n_trials: usize,
@@ -2519,17 +2548,10 @@ pub extern "C" fn rustuna_bench_e2e(
         return -1;
     }
     let res = catch_unwind(AssertUnwindSafe(|| {
-        let sampler: Arc<dyn Sampler> = if use_random_sampler {
-            Arc::new(RandomSampler::seed_from_u64(seed))
-        } else {
-            Arc::new(TpeSampler::seed_from_u64(seed))
+        let (study, _) = match bench_study(seed, use_random_sampler) {
+            Ok(pair) => pair,
+            Err(code) => return code,
         };
-        let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-        let study =
-            match create_study_with_arc("bench", storage, sampler, vec![Direction::Minimize]) {
-                Ok(s) => s,
-                Err(e) => return set_rustuna_error(&e),
-            };
         let dist_x = Distribution::new_float(-10.0, 10.0, None, false);
         let dist_y = Distribution::new_float(-10.0, 10.0, None, false);
         let start = Instant::now();
@@ -2556,13 +2578,180 @@ pub extern "C" fn rustuna_bench_e2e(
         unsafe { *out_ns_per_trial = ns_per_trial as u64 };
         0
     }));
-    match res {
-        Ok(code) => code,
-        Err(e) => {
-            set_last_error(-99, format!("Panic in rustuna_bench_e2e: {e:?}"));
-            -99
-        }
+    finish_bench("rustuna_bench_e2e", res)
+}
+
+/// Native ask/tell loop, no suggestions: isolates checkout plus record.
+/// Swift counterpart: the ask-only probe plus tell. Reports ns per trial.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_bench_ask_tell(
+    n_trials: usize,
+    seed: u64,
+    out_ns_per_trial: *mut u64,
+) -> i32 {
+    if out_ns_per_trial.is_null() || n_trials == 0 {
+        set_last_error(-1, "out_ns_per_trial is null or n_trials==0".to_string());
+        return -1;
     }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let (study, _) = match bench_study(seed, true) {
+            Ok(pair) => pair,
+            Err(code) => return code,
+        };
+        let start = Instant::now();
+        for i in 0..n_trials {
+            let trial = match study.ask() {
+                Ok(t) => t,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            let v = (i as f64) * 0.5;
+            if let Err(e) = study.tell(trial.number, TrialStateValues::Complete(vec![v])) {
+                return set_rustuna_error(&e);
+            }
+        }
+        let elapsed = start.elapsed();
+        let ns_per_trial = elapsed.as_nanos() / (n_trials as u128);
+        unsafe { *out_ns_per_trial = ns_per_trial as u64 };
+        0
+    }));
+    finish_bench("rustuna_bench_ask_tell", res)
+}
+
+/// Native suggest loop over `n_params` floats per trial: the B18 counterpart.
+/// Reports ns per individual suggestion.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_bench_suggest(
+    n_trials: usize,
+    n_params: usize,
+    seed: u64,
+    out_ns_per_suggest: *mut u64,
+) -> i32 {
+    if out_ns_per_suggest.is_null() || n_trials == 0 || n_params == 0 {
+        set_last_error(-1, "null out-pointer or zero count".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let (study, _) = match bench_study(seed, true) {
+            Ok(pair) => pair,
+            Err(code) => return code,
+        };
+        let dist = Distribution::new_float(-10.0, 10.0, None, false);
+        let mut names = Vec::with_capacity(n_params);
+        for p in 0..n_params {
+            names.push(format!("p{p}"));
+        }
+        let start = Instant::now();
+        for _ in 0..n_trials {
+            let mut trial = match study.ask() {
+                Ok(t) => t,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            let mut v = 0.0;
+            for name in &names {
+                match trial.suggest(name, &dist) {
+                    Ok(x) => v += (x - 2.0) * (x - 2.0),
+                    Err(e) => return set_rustuna_error(&e),
+                }
+            }
+            if let Err(e) = study.tell(trial.number, TrialStateValues::Complete(vec![v])) {
+                return set_rustuna_error(&e);
+            }
+        }
+        let elapsed = start.elapsed();
+        let ns = elapsed.as_nanos() / ((n_trials * n_params) as u128);
+        unsafe { *out_ns_per_suggest = ns as u64 };
+        0
+    }));
+    finish_bench("rustuna_bench_suggest", res)
+}
+
+/// Native typed-enqueue loop: the B16 counterpart. Builds the one-param map
+/// per call like the Swift path builds its arrays, so map construction is
+/// inside the measurement on both sides.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_bench_enqueue(n_calls: usize, out_ns_per_call: *mut u64) -> i32 {
+    if out_ns_per_call.is_null() || n_calls == 0 {
+        set_last_error(-1, "out_ns_per_call is null or n_calls==0".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let (study, _) = match bench_study(7, true) {
+            Ok(pair) => pair,
+            Err(code) => return code,
+        };
+        let start = Instant::now();
+        for i in 0..n_calls {
+            let mut params = HashMap::new();
+            params.insert(
+                "x".to_string(),
+                rustuna_core::attr::CategoryLabel::Float((i % 21) as f64 - 10.0),
+            );
+            if let Err(e) = study.enqueue_trial(params, None) {
+                return set_rustuna_error(&e);
+            }
+        }
+        let elapsed = start.elapsed();
+        let ns_per_call = elapsed.as_nanos() / (n_calls as u128);
+        unsafe { *out_ns_per_call = ns_per_call as u64 };
+        0
+    }));
+    finish_bench("rustuna_bench_enqueue", res)
+}
+
+/// Native fetch loop: get_trials plus a per-trial touch, repeated for
+/// stability. The Swift side additionally pays JSON serialization plus C ABI
+/// transfer, so the Swift-minus-native delta on this metric IS the
+/// serialization tax, by design.
+#[unsafe(no_mangle)]
+pub extern "C" fn rustuna_bench_fetch(
+    n_trials: usize,
+    repeats: usize,
+    out_ns_per_trial: *mut u64,
+) -> i32 {
+    if out_ns_per_trial.is_null() || n_trials == 0 || repeats == 0 {
+        set_last_error(-1, "null out-pointer or zero count".to_string());
+        return -1;
+    }
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let (study, storage) = match bench_study(7, true) {
+            Ok(pair) => pair,
+            Err(code) => return code,
+        };
+        for i in 0..n_trials {
+            let trial = match study.ask() {
+                Ok(t) => t,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            if let Err(e) = study.tell(trial.number, TrialStateValues::Complete(vec![i as f64])) {
+                return set_rustuna_error(&e);
+            }
+        }
+        let start = Instant::now();
+        let mut sink = 0u32;
+        for _ in 0..repeats {
+            let mut guard = match storage.write() {
+                Ok(g) => g,
+                Err(e) => {
+                    set_last_error(3, format!("Storage lock poisoned: {e:?}"));
+                    return 3;
+                }
+            };
+            let trials = match guard.get_trials(study.id) {
+                Ok(v) => v,
+                Err(e) => return set_rustuna_error(&e),
+            };
+            for t in trials.iter().flatten() {
+                sink = sink.wrapping_add(t.number);
+            }
+            drop(guard);
+        }
+        let elapsed = start.elapsed();
+        let ns = elapsed.as_nanos() / ((n_trials * repeats) as u128);
+        unsafe { *out_ns_per_trial = ns as u64 };
+        std::hint::black_box(sink);
+        0
+    }));
+    finish_bench("rustuna_bench_fetch", res)
 }
 
 // MARK: - Callback sampler (Swift/custom-sampler upcalls)
@@ -2673,29 +2862,39 @@ impl rustuna_core::sampler::Sampler for CallbackSampler {
             )
         })?;
         match distribution {
-            Distribution::Float { low, high, step, log } => {
-                match self.vtable.suggest_float {
-                    Some(cb) => {
-                        let mut out = 0.0f64;
-                        let code = unsafe {
-                            cb(
-                                self.vtable.ctx,
-                                c_name.as_ptr(),
-                                *low,
-                                *high,
-                                step.unwrap_or(0.0),
-                                *log,
-                                ctx.trial_number,
-                                &mut out,
-                            )
-                        };
-                        check_callback(code, name, "float")?;
-                        Ok(out)
-                    }
-                    None => self.fallback.sample_independent(ctx, storage, name, distribution),
+            Distribution::Float {
+                low,
+                high,
+                step,
+                log,
+            } => match self.vtable.suggest_float {
+                Some(cb) => {
+                    let mut out = 0.0f64;
+                    let code = unsafe {
+                        cb(
+                            self.vtable.ctx,
+                            c_name.as_ptr(),
+                            *low,
+                            *high,
+                            step.unwrap_or(0.0),
+                            *log,
+                            ctx.trial_number,
+                            &mut out,
+                        )
+                    };
+                    check_callback(code, name, "float")?;
+                    Ok(out)
                 }
-            }
-            Distribution::Int { low, high, step, log } => match self.vtable.suggest_int {
+                None => self
+                    .fallback
+                    .sample_independent(ctx, storage, name, distribution),
+            },
+            Distribution::Int {
+                low,
+                high,
+                step,
+                log,
+            } => match self.vtable.suggest_int {
                 Some(cb) => {
                     let mut out = 0i64;
                     let code = unsafe {
@@ -2713,62 +2912,63 @@ impl rustuna_core::sampler::Sampler for CallbackSampler {
                     check_callback(code, name, "int")?;
                     Ok(out as f64)
                 }
-                None => self.fallback.sample_independent(ctx, storage, name, distribution),
+                None => self
+                    .fallback
+                    .sample_independent(ctx, storage, name, distribution),
             },
-            Distribution::Categorical { cardinality } => {
-                match self.vtable.suggest_categorical {
-                    Some(cb) => {
-                        let labels = {
-                            let mut guard = storage.write().map_err(|e| {
+            Distribution::Categorical { cardinality } => match self.vtable.suggest_categorical {
+                Some(cb) => {
+                    let labels = {
+                        let mut guard = storage.write().map_err(|e| {
+                            rustuna_core::Error::with_reason(
+                                rustuna_core::ErrorKind::StorageError,
+                                format!("Storage lock poisoned: {e:?}"),
+                            )
+                        })?;
+                        guard
+                            .get_category_labels(ctx.study_id, name, *cardinality)
+                            .map_err(|e| {
                                 rustuna_core::Error::with_reason(
                                     rustuna_core::ErrorKind::StorageError,
-                                    format!("Storage lock poisoned: {e:?}"),
+                                    format!("Failed to read category labels: {e:?}"),
                                 )
-                            })?;
-                            guard
-                                .get_category_labels(ctx.study_id, name, *cardinality)
-                                .map_err(|e| {
-                                    rustuna_core::Error::with_reason(
-                                        rustuna_core::ErrorKind::StorageError,
-                                        format!("Failed to read category labels: {e:?}"),
-                                    )
-                                })?
-                        };
-                        let label_strs: Vec<String> = match labels {
-                            Some(ls) => ls.iter().map(|l| l.serialize()).collect(),
-                            None => (0..*cardinality).map(|i| i.to_string()).collect(),
-                        };
-                        let c_labels: Vec<CString> = label_strs
-                            .iter()
-                            .map(|s| CString::new(s.as_str()).unwrap_or_default())
-                            .collect();
-                        let ptrs: Vec<*const c_char> =
-                            c_labels.iter().map(|c| c.as_ptr()).collect();
-                        let mut out = 0usize;
-                        let code = unsafe {
-                            cb(
-                                self.vtable.ctx,
-                                c_name.as_ptr(),
-                                ptrs.as_ptr(),
-                                ptrs.len(),
-                                ctx.trial_number,
-                                &mut out,
-                            )
-                        };
-                        check_callback(code, name, "categorical")?;
-                        if out >= ptrs.len() {
-                            return Err(rustuna_core::Error::with_reason(
+                            })?
+                    };
+                    let label_strs: Vec<String> = match labels {
+                        Some(ls) => ls.iter().map(|l| l.serialize()).collect(),
+                        None => (0..*cardinality).map(|i| i.to_string()).collect(),
+                    };
+                    let c_labels: Vec<CString> = label_strs
+                        .iter()
+                        .map(|s| CString::new(s.as_str()).unwrap_or_default())
+                        .collect();
+                    let ptrs: Vec<*const c_char> = c_labels.iter().map(|c| c.as_ptr()).collect();
+                    let mut out = 0usize;
+                    let code = unsafe {
+                        cb(
+                            self.vtable.ctx,
+                            c_name.as_ptr(),
+                            ptrs.as_ptr(),
+                            ptrs.len(),
+                            ctx.trial_number,
+                            &mut out,
+                        )
+                    };
+                    check_callback(code, name, "categorical")?;
+                    if out >= ptrs.len() {
+                        return Err(rustuna_core::Error::with_reason(
                                 rustuna_core::ErrorKind::SamplerError,
                                 format!(
                                     "categorical callback for {name:?} returned out-of-range index {out}"
                                 ),
                             ));
-                        }
-                        Ok(out as f64)
                     }
-                    None => self.fallback.sample_independent(ctx, storage, name, distribution),
+                    Ok(out as f64)
                 }
-            }
+                None => self
+                    .fallback
+                    .sample_independent(ctx, storage, name, distribution),
+            },
         }
     }
 

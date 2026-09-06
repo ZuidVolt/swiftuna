@@ -57,6 +57,10 @@ let package = Package(
             name: "SwiftunaBench",
             targets: ["SwiftunaBench"]
         ),
+        .library(
+            name: "SwiftunaBenchKit",
+            targets: ["SwiftunaBenchKit"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/x-sheep/swift-property-based.git", from: "2.0.0"),
@@ -91,8 +95,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftunaBench",
-            dependencies: ["Swiftuna"],
+            dependencies: ["SwiftunaBenchKit"],
             path: "Tools/SwiftunaBench",
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
+        ),
+        .target(
+            name: "SwiftunaBenchKit",
+            dependencies: ["Swiftuna", "SwiftunaDistributed", "LibRustuna"],
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),
@@ -100,6 +110,12 @@ let package = Package(
             name: "Experimentation",
             dependencies: ["Swiftuna"],
             path: "Tools/Experimentation",
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
+        ),
+        .testTarget(
+            name: "SwiftunaBenchKitTests",
+            dependencies: ["SwiftunaBenchKit"],
             swiftSettings: swiftSettings,
             linkerSettings: linkerSettings
         ),
