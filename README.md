@@ -407,7 +407,7 @@ just docs-preview 8080
 
 ## License
 
-Swiftuna is open source under the [GNU LESSER GENERAL PUBLIC LICENSE](LICENSE).
+Swiftuna is open source under the [Apache2 license](LICENSE).
 
 ### Credits
 Swiftuna builds on [Rustuna](https://github.com/optuna/rustuna) and the algorithmic work of [Optuna](https://github.com/optuna/optuna).
