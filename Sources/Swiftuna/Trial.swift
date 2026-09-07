@@ -62,6 +62,7 @@ public struct Trial: ~Copyable {
     }
 
     internal var intermediateSteps: ContiguousArray<IntermediateStep> = []
+    internal var intermediateValues: [Int: Double] = [:]
 
     internal init(raw: OpaquePointer?, study: Study? = nil) {
         self.raw = raw
@@ -500,6 +501,7 @@ public struct Trial: ~Copyable {
         pruneIfWorse: Bool = false
     ) throws(SwiftunaError) {
         intermediateSteps.append(IntermediateStep(step: step, value: value))
+        intermediateValues[step] = value
         telemetrySpan?.recordEvent(
             name: "trial.report",
             attributes: ["trial.step": .int(step), "trial.value": .double(value)]
@@ -547,7 +549,8 @@ public struct Trial: ~Copyable {
                 study: study,
                 trialNumber: number,
                 step: last.step,
-                currentValue: last.value
+                currentValue: last.value,
+                intermediateValues: intermediateValues
             )
             pruneSpan?.setAttribute("trial.prune_vote", value: .bool(vote))
             pruneSpan?.end(status: .ok)

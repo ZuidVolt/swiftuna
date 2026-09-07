@@ -181,15 +181,15 @@ For strategies Rustuna doesn't ship, implement the suggestion in Swift: ``Callba
 
 ## Pruner comparison
 
-| Pruner | Mechanism | Best for |
-| :--- | :--- | :--- |
-| ``MedianPruner`` | Stops trials performing below the 50th percentile at the same step | Neural network training loops |
-| ``PercentilePruner`` | Stops trials outside a target top $P\%$ threshold | Aggressive resource filtering |
-| ``SuccessiveHalvingPruner`` | Geometric resource rungs with $1/\eta$ retention (ASHA) | Resource allocation sweeps |
-| ``HyperbandPruner`` | Multi-bracket Successive Halving | Neural architecture search |
-| ``PatientPruner`` | Delays pruning decisions across a window of steps | Noisy learning curves |
-| ``ThresholdPruner`` | Cuts off trials crossing hard numerical bounds | Divergence limits |
-| ``NopPruner`` | Never stops trials | Baseline runs, fixed budgets |
+| Pruner | Mechanism | Parameters & Bounds | Best for |
+| :--- | :--- | :--- | :--- |
+| ``MedianPruner`` | Stops trials whose best-so-far value is below the 50th percentile of completed trials at that step | `nStartupTrials`, `nWarmupSteps`, `intervalSteps`, `nMinTrials` | Standard neural network training runs |
+| ``PercentilePruner`` | Stops trials whose best-so-far value falls outside a target top $P\%$ threshold | `percentile`, `nStartupTrials`, `nWarmupSteps`, `intervalSteps`, `nMinTrials` | Aggressive early stopping in compute-constrained setups |
+| ``SuccessiveHalvingPruner`` | Geometric resource rungs with $1/\eta$ retention (ASHA) | `minResource` (`.auto` or `.step(Int)`), `reductionFactor`, `minEarlyStoppingRate`, `bootstrapCount` | Asynchronous parallel resource sweeps |
+| ``HyperbandPruner`` | Multi-bracket ASHA using Optuna CRC32 hash allocation | `minResource`, `maxResource` (`.auto` or `.step(Int)`), `reductionFactor`, `bootstrapCount` | Large-scale neural architecture search |
+| ``PatientPruner`` | Evaluates intermediate score improvement over a patience window (stateless) | `patience`, `minDelta`, optional `wrappedPruner` | Noisy training curves, stagnation detection |
+| ``ThresholdPruner`` | Cuts off trials crossing hard upper/lower bounds or yielding NaN | `lower`, `upper`, `nWarmupSteps`, `intervalSteps` | Divergence limits, physical feasibility bounds |
+| ``NopPruner`` | Never stops trials | None | Baseline benchmarking, fixed budgets |
 
 ---
 
@@ -197,47 +197,94 @@ For strategies Rustuna doesn't ship, implement the suggestion in Swift: ``Callba
 
 ### Median and Percentile pruners
 
-`MedianPruner` stops an active trial if its intermediate value at step $t$ is worse than the median (50th percentile) of previous completed or pruned trials at the exact same step.
+``PercentilePruner`` and ``MedianPruner`` evaluate intermediate reports against historical completed trials at the same step. When a trial reports a metric at step $t$:
 
-Parameters:
-- `nStartupTrials`: Number of initial trials run completely to build a reliable baseline before pruning starts.
-- `nWarmupSteps`: Number of initial steps within each trial evaluated without pruning.
-- `intervalSteps`: Frequency of pruning checks (e.g. check every 2 epochs).
+1. **Warmup and Interval Gating:** Pruning is bypassed if $t < \text{nWarmupSteps}$, or if $t$ is not the first step reported within the current interval bucket $[w + k \cdot \Delta, w + (k+1) \cdot \Delta)$.
+2. **Best-So-Far Evaluation:** Rather than only testing the instantaneous metric, the pruner evaluates the trial's best intermediate value achieved up to step $t$ ($\min$ for minimization, $\max$ for maximization), matching Optuna's `_get_best_intermediate_result_over_steps`.
+3. **Threshold Calculation:** Computes the $P$-th percentile across all previous completed trials that reported at step $t$ using NumPy-compatible linear percentile interpolation:
+   
+   $$\text{threshold} = x_{\text{low}} + \text{frac} \cdot (x_{\text{high}} - x_{\text{low}})$$
+
+   Pruning triggers if fewer than `nMinTrials` completed trials exist at step $t$, or if the trial's best score is worse than the threshold.
+
+``MedianPruner`` is a convenience specialization of ``PercentilePruner`` configured with `percentile: 50.0`.
 
 ```swift
+// Prune if best-so-far is worse than the median, checking every 2 epochs after 10 warmup epochs
 let pruner = MedianPruner(
     nStartupTrials: 5,
     nWarmupSteps: 10,
-    intervalSteps: 2
+    intervalSteps: 2,
+    nMinTrials: 2
+)
+```
+
+### Threshold pruner
+
+``ThresholdPruner`` immediately cuts off trials that diverge or cross predefined numerical thresholds (`lower`, `upper`), or whenever a trial reports a `NaN` evaluation:
+
+```swift
+// Prune if loss exceeds 50.0 or drops below 0.0, active after 5 warmup epochs
+let pruner = ThresholdPruner(
+    lower: 0.0,
+    upper: 50.0,
+    nWarmupSteps: 5,
+    intervalSteps: 1
 )
 ```
 
 ### Successive Halving (ASHA) and Hyperband
 
+#### Asynchronous Successive Halving (``SuccessiveHalvingPruner``)
 Successive Halving allocates resources geometrically across rungs:
 
 $$r_k = \text{minResource} \cdot \eta^k$$
 
-At each rung, only the top $1/\eta$ fraction of trials is promoted to continue to the next rung.
+At each rung, only the top $1/\eta$ fraction of competing trials is promoted to the next rung. Asynchronous Successive Halving (ASHA) evaluates trials asynchronously without barrier synchronization, making it ideal for distributed actor clusters.
 
-`HyperbandPruner` manages several brackets of Successive Halving with varying aggressive early-stopping rates. Trials are assigned to brackets deterministically based on `trialNumber % nBrackets`, making it thread-safe for parallel workers.
+Supports automatic minimum resource inference (`minResource: .auto`): the pruner automatically infers `minResource = max(maxStep / 100, 1)` from the first completed trial in the study.
+
+#### Hyperband (``HyperbandPruner``)
+Hyperband runs several ASHA brackets concurrently with varying aggressiveness to balance exploration versus exploitation.
+
+- **Deterministic CRC32 Allocation:** Hyperband assigns trials to brackets via standard IEEE 802.3 CRC32 hashing over the study name and trial number (`binascii.crc32(f"{study_name}_{trial_number}") % total_budget`), matching Optuna's bracket distribution formula:
+
+  $$\text{budget}_s = \left\lceil \frac{\text{totalBrackets} \cdot \eta^s}{s + 1} \right\rceil$$
+
+- **Automatic Resource Inference:** Supports `maxResource: .auto`, which dynamically detects the maximum step from initial completed trials before constructing the bracket schedule.
+- **Zero-Allocation Architecture:** Static bracket schedules are precalculated in `init` as a lightweight Sendable `HyperbandLadder`. On intermediate reports, only the single active bracket pruner is evaluated, eliminating unnecessary closure and array allocations.
 
 ```swift
 let pruner = HyperbandPruner(
-    minResource: 1,      // First rung evaluated at epoch 1
-    maxResource: 81,     // Maximum training epochs
-    reductionFactor: 3   // Retain top 1/3 at each rung
+    minResource: 1,
+    maxResource: 81,
+    reductionFactor: 3
 )
 let study = try Swiftuna.createStudy(pruner: pruner)
 ```
 
 ### Patient pruner
 
-Training curves can be noisy, with temporary loss spikes that trigger premature pruning. `PatientPruner` wraps any underlying pruner, requiring it to signal pruning for `patience` consecutive steps before actually stopping the trial:
+Training curves are frequently non-monotonic with transient spikes that can trigger premature early stopping. ``PatientPruner`` monitors intermediate trajectories and detects stagnation without requiring locks or mutable state:
+
+1. **Stateless Window Inspection:** Splits reported steps into historical steps $T_{\text{before}} = \text{steps}[: -(\text{patience} + 1)]$ and recent steps $T_{\text{after}} = \text{steps}[-(\text{patience} + 1) :]$.
+2. **Stagnation Gating:**
+   - **Minimization:** Stagnation occurs when $\min(T_{\text{before}}) + \text{minDelta} < \min(T_{\text{after}})$.
+   - **Maximization:** Stagnation occurs when $\max(T_{\text{before}}) - \text{minDelta} > \max(T_{\text{after}})$.
+3. **Dual Operating Modes:**
+   - **Standalone Mode (`wrappedPruner == nil`):** Prunes the trial immediately when stagnation is detected across `patience` consecutive steps.
+   - **Wrapped Mode (`wrappedPruner != nil`):** Delegates pruning decisions to the underlying pruner (e.g. ``MedianPruner``) only when the trial is actively stagnating. Trials continuing to make progress by at least `minDelta` are never pruned, regardless of relative ranking.
 
 ```swift
-let basePruner = MedianPruner(nStartupTrials: 5)
-let robustPruner = PatientPruner(wrappedPruner: basePruner, patience: 3)
+// Standalone: prune if training stagnates for 5 epochs without improving by at least 0.01
+let standalonePruner = PatientPruner(patience: 5, minDelta: 0.01)
+
+// Wrapped: protect MedianPruner from pruning trials that are still making steady progress
+let robustPruner = PatientPruner(
+    wrappedPruner: MedianPruner(nStartupTrials: 5),
+    patience: 3,
+    minDelta: 0.005
+)
 ```
 
 ---

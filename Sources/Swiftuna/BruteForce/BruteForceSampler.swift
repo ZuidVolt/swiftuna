@@ -34,6 +34,9 @@ public final class BruteForceSampler: CustomSampler, Sendable {
     /// If `true`, the sampler does not skip candidate branches currently being evaluated by concurrent workers.
     public let avoidPrematureStop: Bool
 
+    /// If `true`, uses NumPy-compatible MT19937 PRNG and choice distribution for exact parity validation.
+    public let useNumpyPRNG: Bool
+
     /// Thread-safe internal state protected by a Swift 6 Mutex.
     private let mutex: Mutex<BruteForceState>
 
@@ -43,18 +46,22 @@ public final class BruteForceSampler: CustomSampler, Sendable {
     ///   - seed: Optional seed for reproducible candidate traversal order.
     ///   - avoidPrematureStop: If `true`, does not avoid candidate branches currently evaluated by concurrent workers.
     ///   - searchSpace: Optional upfront parameter search space. If omitted, discovered dynamically at runtime.
+    ///   - useNumpyPRNG: If `true`, uses NumPy-compatible MT19937 PRNG for exact parity validation.
     public init(
         seed: UInt64? = nil,
         avoidPrematureStop: Bool = false,
-        searchSpace: [String: [ParameterValue]]? = nil
+        searchSpace: [String: [ParameterValue]]? = nil,
+        useNumpyPRNG: Bool = false
     ) {
         self.seed = seed
         self.avoidPrematureStop = avoidPrematureStop
+        self.useNumpyPRNG = useNumpyPRNG
         self.mutex = Mutex(
             BruteForceState(
                 seed: seed,
                 avoidPrematureStop: avoidPrematureStop,
-                searchSpace: searchSpace
+                searchSpace: searchSpace,
+                useNumpyPRNG: useNumpyPRNG
             )
         )
     }

@@ -1,0 +1,122 @@
+{
+  "problem_name": "percentile_pruning",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "params": {
+        "p": 5.829175105878605
+      },
+      "value": 1.0,
+      "intermediate_values": {
+        "0": 10.0,
+        "1": 8.0,
+        "2": 6.0,
+        "3": 4.0,
+        "4": 2.0,
+        "5": 1.0
+      }
+    },
+    {
+      "number": 1,
+      "state": "COMPLETE",
+      "params": {
+        "p": 8.905007924088512
+      },
+      "value": 3.0,
+      "intermediate_values": {
+        "0": 12.0,
+        "1": 10.0,
+        "2": 8.0,
+        "3": 6.0,
+        "4": 4.0,
+        "5": 3.0
+      }
+    },
+    {
+      "number": 2,
+      "state": "COMPLETE",
+      "params": {
+        "p": 9.381294305735553
+      },
+      "value": 0.5,
+      "intermediate_values": {
+        "0": 8.0,
+        "1": 6.0,
+        "2": 4.0,
+        "3": 2.0,
+        "4": 1.0,
+        "5": 0.5
+      }
+    },
+    {
+      "number": 3,
+      "state": "PRUNED",
+      "params": {
+        "p": 9.012794566442551
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 5.0,
+        "1": 15.0,
+        "2": 4.0,
+        "3": 3.0,
+        "4": 2.0,
+        "5": 1.0
+      }
+    },
+    {
+      "number": 4,
+      "state": "PRUNED",
+      "params": {
+        "p": 8.228292515302577
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 20.0,
+        "1": 25.0
+      }
+    },
+    {
+      "number": 5,
+      "state": "PRUNED",
+      "params": {
+        "p": 6.2996984629849315
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 7.0,
+        "1": 7.0,
+        "2": 12.0,
+        "3": 12.0
+      }
+    },
+    {
+      "number": 6,
+      "state": "PRUNED",
+      "params": {
+        "p": 8.911271066017386
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 9.0,
+        "1": 9.0
+      }
+    },
+    {
+      "number": 7,
+      "state": "PRUNED",
+      "params": {
+        "p": 7.348640182643706
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 15.0,
+        "1": 15.0
+      }
+    }
+  ],
+  "best_trial_number": 2,
+  "best_value": 0.5
+}

@@ -141,10 +141,9 @@ public final class CMASampler: CustomSampler, Sendable {
             }
 
             // 3. Process completed generation using history.new (O(1) per trial)
-            for trial in history.new where trial.state == .complete {
-                if let point = state.askedInGen.removeValue(forKey: trial.number),
-                    let val = trial.values.first
-                {
+            for trial in history.new {
+                guard let point = state.askedInGen.removeValue(forKey: trial.number) else { continue }
+                if trial.state == .complete, let val = trial.values.first {
                     state.completedInGen.append((point: point, value: val))
                 }
             }

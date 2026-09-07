@@ -1,0 +1,89 @@
+{
+  "problem_name": "bruteforce_flat",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "params": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "value": 0.25
+    },
+    {
+      "number": 1,
+      "state": "COMPLETE",
+      "params": {
+        "x": 2.0,
+        "y": 0.5
+      },
+      "value": 1.0
+    },
+    {
+      "number": 2,
+      "state": "COMPLETE",
+      "params": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "value": 1.25
+    },
+    {
+      "number": 3,
+      "state": "COMPLETE",
+      "params": {
+        "x": 0.0,
+        "y": 1.0
+      },
+      "value": 1.25
+    },
+    {
+      "number": 4,
+      "state": "COMPLETE",
+      "params": {
+        "x": 1.0,
+        "y": 0.5
+      },
+      "value": 0.0
+    },
+    {
+      "number": 5,
+      "state": "COMPLETE",
+      "params": {
+        "x": 0.0,
+        "y": 0.5
+      },
+      "value": 1.0
+    },
+    {
+      "number": 6,
+      "state": "COMPLETE",
+      "params": {
+        "x": 2.0,
+        "y": 0.0
+      },
+      "value": 1.25
+    },
+    {
+      "number": 7,
+      "state": "COMPLETE",
+      "params": {
+        "x": 1.0,
+        "y": 0.0
+      },
+      "value": 0.25
+    },
+    {
+      "number": 8,
+      "state": "COMPLETE",
+      "params": {
+        "x": 2.0,
+        "y": 1.0
+      },
+      "value": 1.25
+    }
+  ],
+  "best_trial_number": 4,
+  "best_value": 0.0
+}

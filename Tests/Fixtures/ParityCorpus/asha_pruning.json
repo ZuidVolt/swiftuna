@@ -1,0 +1,124 @@
+{
+  "problem_name": "asha_pruning",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "params": {
+        "p": 9.501964781404773
+      },
+      "value": 5.5,
+      "intermediate_values": {
+        "0": 10.0,
+        "1": 9.5,
+        "2": 9.0,
+        "3": 8.5,
+        "4": 8.0,
+        "5": 7.5,
+        "6": 7.0,
+        "7": 6.5,
+        "8": 6.0,
+        "9": 5.5
+      }
+    },
+    {
+      "number": 1,
+      "state": "PRUNED",
+      "params": {
+        "p": 2.035666287644109
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 15.0,
+        "1": 14.5
+      }
+    },
+    {
+      "number": 2,
+      "state": "COMPLETE",
+      "params": {
+        "p": 2.917281694009878
+      },
+      "value": 3.5,
+      "intermediate_values": {
+        "0": 8.0,
+        "1": 7.5,
+        "2": 7.0,
+        "3": 6.5,
+        "4": 6.0,
+        "5": 5.5,
+        "6": 5.0,
+        "7": 4.5,
+        "8": 4.0,
+        "9": 3.5
+      }
+    },
+    {
+      "number": 3,
+      "state": "PRUNED",
+      "params": {
+        "p": 7.722008946062012
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 12.0,
+        "1": 11.5
+      }
+    },
+    {
+      "number": 4,
+      "state": "COMPLETE",
+      "params": {
+        "p": 6.689069997115352
+      },
+      "value": 1.5,
+      "intermediate_values": {
+        "0": 6.0,
+        "1": 5.5,
+        "2": 5.0,
+        "3": 4.5,
+        "4": 4.0,
+        "5": 3.5,
+        "6": 3.0,
+        "7": 2.5,
+        "8": 2.0,
+        "9": 1.5
+      }
+    },
+    {
+      "number": 5,
+      "state": "PRUNED",
+      "params": {
+        "p": 4.55530471127834
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 11.0,
+        "1": 10.5
+      }
+    },
+    {
+      "number": 6,
+      "state": "COMPLETE",
+      "params": {
+        "p": 2.051289753723231
+      },
+      "value": 0.5,
+      "intermediate_values": {
+        "0": 5.0,
+        "1": 4.5,
+        "2": 4.0,
+        "3": 3.5,
+        "4": 3.0,
+        "5": 2.5,
+        "6": 2.0,
+        "7": 1.5,
+        "8": 1.0,
+        "9": 0.5
+      }
+    }
+  ],
+  "best_trial_number": 6,
+  "best_value": 0.5
+}

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import Swiftuna
 
 @Suite("BruteForceSampler Tests")
@@ -103,5 +104,40 @@ struct BruteForceSamplerTests {
         #expect(abs(sortedPoints[2] - 0.3) < 1e-6)
         #expect(abs(sortedPoints[3] - 0.4) < 1e-6)
         #expect(abs(sortedPoints[4] - 0.5) < 1e-6)
+    }
+
+    @Test("BruteForceSampler with useNumpyPRNG matches Python Optuna parameter sequence exactly")
+    func testBruteForcePythonParity() throws {
+        let sampler = BruteForceSampler(seed: 42, useNumpyPRNG: true)
+        let study = try Swiftuna.createStudy(
+            name: "brute_parity_\(UUID().uuidString)",
+            direction: .minimize,
+            sampler: sampler
+        )
+
+        var trialsParams: [(x: Int, y: Double)] = []
+        try study.optimize(nTrials: 20) { trial in
+            let x = try trial.suggest("x", in: 0...2)
+            let y = try trial.suggest("y", in: 0.0...1.0, step: 0.5)
+            trialsParams.append((x, y))
+            return Double(x * 10) + y
+        }
+
+        #expect(trialsParams.count == 9)
+        let expected: [(x: Int, y: Double)] = [
+            (1, 1.0),
+            (2, 0.5),
+            (0, 0.0),
+            (0, 1.0),
+            (1, 0.5),
+            (0, 0.5),
+            (2, 0.0),
+            (1, 0.0),
+            (2, 1.0),
+        ]
+        for (i, (act, exp)) in zip(trialsParams, expected).enumerated() {
+            #expect(act.x == exp.x, "Trial \(i) param x mismatch: got \(act.x), expected \(exp.x)")
+            #expect(abs(act.y - exp.y) < 1e-9, "Trial \(i) param y mismatch: got \(act.y), expected \(exp.y)")
+        }
     }
 }

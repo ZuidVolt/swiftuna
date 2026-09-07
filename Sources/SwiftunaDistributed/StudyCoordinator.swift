@@ -149,7 +149,8 @@ public distributed actor StudyCoordinator<ActorSystem> where ActorSystem: Distri
                 study: study,
                 trialNumber: trialNumber,
                 step: step,
-                currentValue: value
+                currentValue: value,
+                intermediateValues: active.intermediateSteps
             )
         }
     }

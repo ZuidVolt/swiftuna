@@ -1,0 +1,96 @@
+{
+  "problem_name": "threshold_pruning",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "params": {
+        "p": 3.24667000148719
+      },
+      "value": 2.5,
+      "intermediate_values": {
+        "0": 5.0,
+        "1": 4.5,
+        "2": 4.0,
+        "3": 3.5,
+        "4": 3.0,
+        "5": 2.5
+      }
+    },
+    {
+      "number": 1,
+      "state": "PRUNED",
+      "params": {
+        "p": 4.237215463784166
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 15.0,
+        "1": 13.0,
+        "2": 11.0
+      }
+    },
+    {
+      "number": 2,
+      "state": "PRUNED",
+      "params": {
+        "p": 5.095305533243302
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 4.0,
+        "1": 4.0,
+        "2": 4.0,
+        "3": 4.0,
+        "4": 20.0
+      }
+    },
+    {
+      "number": 3,
+      "state": "PRUNED",
+      "params": {
+        "p": 3.312170864170041
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 2.0,
+        "1": 2.0,
+        "2": 2.0,
+        "3": 2.0,
+        "4": -2.0
+      }
+    },
+    {
+      "number": 4,
+      "state": "PRUNED",
+      "params": {
+        "p": 3.551726357142404
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 5.0,
+        "1": 5.0,
+        "2": -10.0
+      }
+    },
+    {
+      "number": 5,
+      "state": "COMPLETE",
+      "params": {
+        "p": 5.954927426224447
+      },
+      "value": 4.0,
+      "intermediate_values": {
+        "0": 3.0,
+        "1": 3.2,
+        "2": 3.4,
+        "3": 3.6,
+        "4": 3.8,
+        "5": 4.0
+      }
+    }
+  ],
+  "best_trial_number": 0,
+  "best_value": 2.5
+}

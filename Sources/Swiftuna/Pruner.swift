@@ -1,5 +1,54 @@
 import Synchronization
 
+/// Specifies resource allocation bounds (e.g. `minResource` or `maxResource`) for rungs in early-stopping algorithms.
+///
+/// Supports automatic heuristic inference from initial completed trials (`.auto`) or explicit step bounds (`.step(Int)`).
+public enum ResourceBound: ExpressibleByIntegerLiteral, Sendable, Equatable {
+    /// Automatically infers the resource bound dynamically based on the maximum step observed in completed trials.
+    case auto
+    /// An explicit static step bound.
+    case step(Int)
+
+    public init(integerLiteral value: Int) {
+        self = .step(value)
+    }
+
+    /// Returns the explicit step value, or `nil` if `.auto`.
+    public var stepValue: Int? {
+        switch self {
+        case .auto: return nil
+        case .step(let s): return s
+        }
+    }
+}
+
+/// Checks whether `step` is the first reported step in the current interval bucket `[warmup + k * interval, warmup + (k+1) * interval)`.
+@inline(always)
+internal func isFirstInIntervalStep(
+    step: Int,
+    reportedSteps: some Collection<Int>,
+    warmup: Int,
+    interval: Int
+) -> Bool {
+    guard step >= warmup else { return false }
+    let bucket = (step - warmup) / interval
+    let minInBucket = warmup + bucket * interval
+    return !reportedSteps.contains { $0 >= minInBucket && $0 < step }
+}
+
+/// Standard IEEE 802.3 CRC32 hashing replicating Python's `binascii.crc32` exactly.
+internal func optunaCRC32(_ string: String) -> UInt32 {
+    var crc: UInt32 = 0xFFFF_FFFF
+    for byte in string.utf8 {
+        crc ^= UInt32(byte)
+        for _ in 0..<8 {
+            let mask = (crc & 1) != 0 ? UInt32(0xEDB8_8320) : 0
+            crc = (crc >> 1) ^ mask
+        }
+    }
+    return ~crc
+}
+
 /// Protocol for deciding whether an active trial should be early-stopped based on intermediate values.
 public protocol Pruner: Sendable {
     /// Evaluates whether the given trial should be pruned at `step`.
@@ -7,8 +56,27 @@ public protocol Pruner: Sendable {
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool
+}
+
+extension Pruner {
+    /// Backwards-compatible evaluation without explicit intermediate history.
+    public func shouldPrune(
+        study: Study,
+        trialNumber: Int,
+        step: Int,
+        currentValue: Double
+    ) throws(SwiftunaError) -> Bool {
+        try shouldPrune(
+            study: study,
+            trialNumber: trialNumber,
+            step: step,
+            currentValue: currentValue,
+            intermediateValues: [step: currentValue]
+        )
+    }
 }
 
 /// No-operation pruner that never early-stops trials (default).
@@ -19,7 +87,8 @@ public struct NopPruner: Pruner {
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) -> Bool {
         false
     }
@@ -27,8 +96,8 @@ public struct NopPruner: Pruner {
 
 /// Pruner using the median stopping rule.
 ///
-/// Prunes an active trial if its intermediate value at a step is worse than the median (50th percentile)
-/// of intermediate values reported by previous completed or pruned trials at the same step.
+/// Prunes an active trial if its best intermediate value up to the current step is worse than the median (50th percentile)
+/// of intermediate values reported by previous completed trials at the same step.
 ///
 /// Under the hood, `MedianPruner` delegates to ``PercentilePruner`` with `percentile: 50.0`.
 ///
@@ -49,22 +118,28 @@ public struct MedianPruner: Pruner {
     /// Step interval at which pruning decisions are evaluated.
     public var intervalSteps: Int { underlying.intervalSteps }
 
+    /// Minimum number of reported trials at a step required before pruning decisions take effect.
+    public var nMinTrials: Int { underlying.nMinTrials }
+
     /// Initializes a Median pruner.
     ///
     /// - Parameters:
     ///   - nStartupTrials: Trials run before pruning starts. Defaults to `5`.
     ///   - nWarmupSteps: Steps within a trial before pruning starts. Defaults to `0`.
     ///   - intervalSteps: Step frequency for evaluating pruning. Defaults to `1`.
+    ///   - nMinTrials: Minimum completed trials required at a step before pruning. Defaults to `1`.
     public init(
         nStartupTrials: Int = 5,
         nWarmupSteps: Int = 0,
-        intervalSteps: Int = 1
+        intervalSteps: Int = 1,
+        nMinTrials: Int = 1
     ) {
         self.underlying = PercentilePruner(
             percentile: 50.0,
             nStartupTrials: nStartupTrials,
             nWarmupSteps: nWarmupSteps,
-            intervalSteps: intervalSteps
+            intervalSteps: intervalSteps,
+            nMinTrials: nMinTrials
         )
     }
 
@@ -73,21 +148,23 @@ public struct MedianPruner: Pruner {
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool {
         try underlying.shouldPrune(
             study: study,
             trialNumber: trialNumber,
             step: step,
-            currentValue: currentValue
+            currentValue: currentValue,
+            intermediateValues: intermediateValues
         )
     }
 }
 
-/// Pruner to keep trials whose intermediate values fall in the top percentile of historical trials.
+/// Pruner to keep trials whose best intermediate values fall in the top percentile of historical trials.
 ///
-/// Prunes an active trial if its intermediate value is worse than the given `percentile` among previous
-/// completed and pruned trials at the same step.
+/// Prunes an active trial if its best intermediate value up to the current step is worse than the given `percentile`
+/// among previous completed trials at the same step.
 ///
 /// ### Example
 /// ```swift
@@ -107,6 +184,9 @@ public struct PercentilePruner: Pruner {
     /// Step interval at which pruning decisions are evaluated.
     public let intervalSteps: Int
 
+    /// Minimum number of completed trials required at a step before pruning is evaluated.
+    public let nMinTrials: Int
+
     /// Initializes a Percentile pruner.
     ///
     /// - Parameters:
@@ -114,61 +194,98 @@ public struct PercentilePruner: Pruner {
     ///   - nStartupTrials: Trials run before pruning starts. Defaults to `5`.
     ///   - nWarmupSteps: Steps within each trial before pruning starts. Defaults to `0`.
     ///   - intervalSteps: Step frequency for evaluating pruning. Defaults to `1`.
+    ///   - nMinTrials: Minimum completed trials at a step required to judge pruning. Defaults to `1`.
     public init(
         percentile: Double = 50.0,
         nStartupTrials: Int = 5,
         nWarmupSteps: Int = 0,
-        intervalSteps: Int = 1
+        intervalSteps: Int = 1,
+        nMinTrials: Int = 1
     ) {
-        self.percentile = min(100.0, max(0.0, percentile))
-        self.nStartupTrials = max(0, nStartupTrials)
-        self.nWarmupSteps = max(0, nWarmupSteps)
-        self.intervalSteps = max(1, intervalSteps)
+        precondition(
+            percentile >= 0.0 && percentile <= 100.0, "Percentile must be between 0.0 and 100.0, got \(percentile).")
+        precondition(nStartupTrials >= 0, "nStartupTrials must be non-negative, got \(nStartupTrials).")
+        precondition(nWarmupSteps >= 0, "nWarmupSteps must be non-negative, got \(nWarmupSteps).")
+        precondition(intervalSteps >= 1, "intervalSteps must be at least 1, got \(intervalSteps).")
+        precondition(nMinTrials >= 1, "nMinTrials must be at least 1, got \(nMinTrials).")
+
+        self.percentile = percentile
+        self.nStartupTrials = nStartupTrials
+        self.nWarmupSteps = nWarmupSteps
+        self.intervalSteps = intervalSteps
+        self.nMinTrials = nMinTrials
     }
 
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool {
-        if step < nWarmupSteps || step % intervalSteps != 0 {
+        if step < nWarmupSteps {
+            return false
+        }
+        if !isFirstInIntervalStep(
+            step: step, reportedSteps: intermediateValues.keys, warmup: nWarmupSteps, interval: intervalSteps)
+        {
             return false
         }
 
-        let allTrials = try study.trials
-        let previousTrials = allTrials.filter {
-            $0.number < trialNumber && ($0.state == .complete || $0.state == .pruned)
+        // Determine the trial's best intermediate result over all steps up to `step`
+        let bestIntermediateResult: Double
+        if study.direction == .minimize {
+            bestIntermediateResult = intermediateValues.values.min() ?? currentValue
+        } else {
+            bestIntermediateResult = intermediateValues.values.max() ?? currentValue
         }
+
+        if bestIntermediateResult.isNaN {
+            return true
+        }
+
+        // Fetch completed trials across CFFI using state mask to avoid serializing pending/failed/running trials
+        let completedTrials = try study.trials(where: [.complete])
+        let previousTrials = completedTrials.filter { $0.number < trialNumber }
 
         if previousTrials.count < nStartupTrials {
             return false
         }
 
-        let valuesAtStep: [Double] = previousTrials.compactMap { $0.intermediateValues[step] }
-        guard !valuesAtStep.isEmpty else {
+        let valuesAtStep: [Double] = previousTrials.compactMap { $0.intermediateValues[step] }.filter { !$0.isNaN }
+        guard valuesAtStep.count >= nMinTrials else {
             return false
         }
 
         let sortedValues = valuesAtStep.sorted()
-        let index = Int(Double(sortedValues.count - 1) * (percentile / 100.0))
-        let threshold = sortedValues[min(max(0, index), sortedValues.count - 1)]
+        let effectivePercentile = study.direction == .maximize ? (100.0 - percentile) : percentile
+        let threshold: Double
+        if sortedValues.count == 1 {
+            threshold = sortedValues[0]
+        } else {
+            let virtualIdx = Double(sortedValues.count - 1) * (effectivePercentile / 100.0)
+            let low = Int(virtualIdx.rounded(.down))
+            let high = Int(virtualIdx.rounded(.up))
+            let frac = virtualIdx - Double(low)
+            threshold = sortedValues[low] + frac * (sortedValues[high] - sortedValues[low])
+        }
 
         if study.direction == .minimize {
-            return currentValue > threshold
+            return bestIntermediateResult > threshold
         }
-        return currentValue < threshold
+        return bestIntermediateResult < threshold
     }
 }
 
 /// Pruner that prunes immediately if an intermediate value crosses absolute predefined thresholds.
 ///
 /// Evaluates whether the reported value exceeds `upper` or drops below `lower`. Also prunes `NaN` evaluations.
+/// Supports warmup step suppression and interval checking matching Python Optuna.
 ///
 /// ### Example
 /// ```swift
-/// // Prune immediately if loss exceeds 100.0 or drops below 0.0
-/// let pruner = ThresholdPruner(lower: 0.0, upper: 100.0)
+/// // Prune immediately if loss exceeds 100.0 or drops below 0.0 after 5 warmup steps
+/// let pruner = ThresholdPruner(lower: 0.0, upper: 100.0, nWarmupSteps: 5)
 /// ```
 public struct ThresholdPruner: Pruner {
     /// Lower bound threshold. If an intermediate value is `< lower`, the trial is pruned.
@@ -177,22 +294,54 @@ public struct ThresholdPruner: Pruner {
     /// Upper bound threshold. If an intermediate value is `> upper`, the trial is pruned.
     public let upper: Double?
 
+    /// Number of initial steps within each trial before pruning evaluation begins.
+    public let nWarmupSteps: Int
+
+    /// Step interval at which pruning decisions are evaluated.
+    public let intervalSteps: Int
+
     /// Initializes a Threshold pruner.
     ///
     /// - Parameters:
     ///   - lower: Optional lower bound cutoff.
     ///   - upper: Optional upper bound cutoff.
-    public init(lower: Double? = nil, upper: Double? = nil) {
+    ///   - nWarmupSteps: Initial steps before pruning begins. Defaults to `0`.
+    ///   - intervalSteps: Step interval between checks. Defaults to `1`.
+    public init(
+        lower: Double? = nil,
+        upper: Double? = nil,
+        nWarmupSteps: Int = 0,
+        intervalSteps: Int = 1
+    ) {
+        precondition(lower != nil || upper != nil, "Either lower or upper threshold must be specified.")
+        if let lower, let upper {
+            precondition(
+                lower <= upper, "Lower threshold (\(lower)) must be less than or equal to upper threshold (\(upper)).")
+        }
+        precondition(nWarmupSteps >= 0, "nWarmupSteps must be non-negative, got \(nWarmupSteps).")
+        precondition(intervalSteps >= 1, "intervalSteps must be at least 1, got \(intervalSteps).")
+
         self.lower = lower
         self.upper = upper
+        self.nWarmupSteps = nWarmupSteps
+        self.intervalSteps = intervalSteps
     }
 
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) -> Bool {
+        if step < nWarmupSteps {
+            return false
+        }
+        if !isFirstInIntervalStep(
+            step: step, reportedSteps: intermediateValues.keys, warmup: nWarmupSteps, interval: intervalSteps)
+        {
+            return false
+        }
         if currentValue.isNaN {
             return true
         }
@@ -216,12 +365,12 @@ public struct ThresholdPruner: Pruner {
 ///
 /// ### Example
 /// ```swift
-/// let pruner = SuccessiveHalvingPruner(minResource: 1, reductionFactor: 4)
+/// let pruner = SuccessiveHalvingPruner(minResource: .auto, reductionFactor: 4)
 /// let study = try Swiftuna.createStudy(pruner: pruner)
 /// ```
 public struct SuccessiveHalvingPruner: Pruner {
-    /// Minimum resource allocation (e.g. initial epoch count or step) before trials encounter the first rung.
-    public let minResource: Int
+    /// Minimum resource allocation bound before trials encounter the first rung (supports `.auto` or explicit `.step(Int)`).
+    public let minResource: ResourceBound
 
     /// Reduction factor $\eta$ governing the promotion rate ($1 / \eta$) and rung progression spacing.
     public let reductionFactor: Int
@@ -238,28 +387,39 @@ public struct SuccessiveHalvingPruner: Pruner {
     /// Initializes an Asynchronous Successive Halving (ASHA) pruner.
     ///
     /// - Parameters:
-    ///   - minResource: Minimum resource step before the first rung. Defaults to `1`.
+    ///   - minResource: Minimum resource bound before the first rung (defaults to `.auto` or integer literal).
     ///   - reductionFactor: Promotion divisor $\eta$. Defaults to `4`.
     ///   - minEarlyStoppingRate: Initial rung rate exponent. Defaults to `0`.
     ///   - bootstrapCount: Trials needed at a rung before pruning begins. Defaults to `0`.
     ///   - trialFilter: Optional closure to isolate trials by bracket.
     public init(
-        minResource: Int = 1,
+        minResource: ResourceBound = .step(1),
         reductionFactor: Int = 4,
         minEarlyStoppingRate: Int = 0,
         bootstrapCount: Int = 0,
         trialFilter: (@Sendable (PersistedTrial) -> Bool)? = nil
     ) {
-        self.minResource = max(1, minResource)
-        self.reductionFactor = max(2, reductionFactor)
-        self.minEarlyStoppingRate = max(0, minEarlyStoppingRate)
-        self.bootstrapCount = max(0, bootstrapCount)
+        precondition(
+            bootstrapCount == 0 || minResource != .auto,
+            "bootstrapCount > 0 and minResource == .auto are mutually incompatible.")
+        precondition(reductionFactor >= 2, "reductionFactor must be at least 2, got \(reductionFactor).")
+        precondition(
+            minEarlyStoppingRate >= 0, "minEarlyStoppingRate must be non-negative, got \(minEarlyStoppingRate).")
+        precondition(bootstrapCount >= 0, "bootstrapCount must be non-negative, got \(bootstrapCount).")
+        if let s = minResource.stepValue {
+            precondition(s >= 1, "minResource must be at least 1, got \(s).")
+        }
+
+        self.minResource = minResource
+        self.reductionFactor = reductionFactor
+        self.minEarlyStoppingRate = minEarlyStoppingRate
+        self.bootstrapCount = bootstrapCount
         self.trialFilter = trialFilter
     }
 
-    /// Computes the step index for the given rung index $k$.
-    public func rungStep(at index: Int) -> Int {
-        var r = minResource
+    /// Computes the step index for the given rung index $k$ using an explicit or resolved minimum resource.
+    public func rungStep(at index: Int, effectiveMinResource: Int? = nil) -> Int {
+        var r = effectiveMinResource ?? minResource.stepValue ?? 1
         let totalRate = minEarlyStoppingRate + index
         for _ in 0..<totalRate {
             r *= reductionFactor
@@ -267,10 +427,11 @@ public struct SuccessiveHalvingPruner: Pruner {
         return r
     }
 
-    /// Checks if a given step matches any rung.
-    public func isRung(step: Int) -> Bool {
-        guard step >= minResource else { return false }
-        var r = rungStep(at: 0)
+    /// Checks if a given step matches any rung for the given minimum resource.
+    public func isRung(step: Int, effectiveMinResource: Int? = nil) -> Bool {
+        let baseMin = effectiveMinResource ?? minResource.stepValue ?? 1
+        guard step >= baseMin else { return false }
+        var r = rungStep(at: 0, effectiveMinResource: baseMin)
         while r <= step {
             if r == step {
                 return true
@@ -284,37 +445,96 @@ public struct SuccessiveHalvingPruner: Pruner {
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool {
-        guard isRung(step: step) else {
+        let completedTrials = try study.trials(where: [.complete])
+
+        // Resolve effective minimum resource
+        let effectiveMin: Int
+        if let explicit = minResource.stepValue {
+            effectiveMin = explicit
+        } else {
+            let maxSteps = completedTrials.compactMap { $0.intermediateValues.keys.max() }
+            guard let maxStep = maxSteps.max() else {
+                return false  // No completed trials yet to estimate minResource
+            }
+            effectiveMin = max(maxStep / 100, 1)
+        }
+
+        guard isRung(step: step, effectiveMinResource: effectiveMin) else {
             return false
         }
 
-        let allTrials = try study.trials
-        let completedOrPruned = allTrials.filter {
-            $0.number < trialNumber
-                && ($0.state == .complete || $0.state == .pruned)
-                && (trialFilter?($0) ?? true)
+        if currentValue.isNaN {
+            return true
         }
 
-        let valuesAtRung = completedOrPruned.compactMap { $0.intermediateValues[step] }
-        guard valuesAtRung.count >= bootstrapCount, !valuesAtRung.isEmpty else {
-            return false
+        let competingTrials = completedTrials.filter {
+            $0.number < trialNumber && (trialFilter?($0) ?? true)
         }
 
-        let numPromoted = max(1, valuesAtRung.count / reductionFactor)
+        var competingValues = competingTrials.compactMap { $0.intermediateValues[step] }.filter { !$0.isNaN }
+        competingValues.append(currentValue)
 
-        let sortedValues =
-            study.direction == .minimize
-            ? valuesAtRung.sorted(by: <)
-            : valuesAtRung.sorted(by: >)
-
-        let cutoffThreshold = sortedValues[numPromoted - 1]
-
-        if study.direction == .minimize {
-            return currentValue > cutoffThreshold
+        if competingValues.count <= bootstrapCount {
+            return true
         }
-        return currentValue < cutoffThreshold
+
+        var promotableIdx = (competingValues.count / reductionFactor) - 1
+        if promotableIdx == -1 {
+            promotableIdx = 0
+        }
+
+        competingValues.sort()
+        if study.direction == .maximize {
+            return currentValue < competingValues[competingValues.count - 1 - promotableIdx]
+        }
+        return currentValue > competingValues[promotableIdx]
+    }
+}
+
+/// Encapsulates precomputed Hyperband bracket ladder schedules and CRC32 bracket assignments.
+internal struct HyperbandLadder: Sendable {
+    let totalBrackets: Int
+    let budgets: [Int]
+    let totalBudget: Int
+
+    init(minResource: Int, maxResource: Int, reductionFactor: Int) {
+        var sMax = 0
+        var resourceCap = minResource
+        while resourceCap * reductionFactor <= maxResource {
+            resourceCap *= reductionFactor
+            sMax += 1
+        }
+        let total = sMax + 1
+        self.totalBrackets = total
+
+        var budgetsList: [Int] = []
+        var totalB = 0
+        for bracketId in 0..<total {
+            let s = total - 1 - bracketId
+            var etaPowS = 1
+            for _ in 0..<s { etaPowS *= reductionFactor }
+            let b = (total * etaPowS + s) / (s + 1)
+            budgetsList.append(b)
+            totalB += b
+        }
+        self.budgets = budgetsList
+        self.totalBudget = totalB
+    }
+
+    func bracket(for trialNumber: Int, studyName: String?) -> Int {
+        if let studyName, totalBudget > 0 {
+            var n = Int(optunaCRC32("\(studyName)_\(trialNumber)") % UInt32(totalBudget))
+            for (idx, b) in budgets.enumerated() {
+                n -= b
+                if n < 0 {
+                    return idx
+                }
+            }
+        }
+        return trialNumber % totalBrackets
     }
 }
 
@@ -322,20 +542,19 @@ public struct SuccessiveHalvingPruner: Pruner {
 ///
 /// Hyperband addresses the exploration vs. exploitation trade-off by running several
 /// ``SuccessiveHalvingPruner`` brackets with varying aggressive early stopping configurations.
-/// Trials are deterministically assigned to brackets based on `trialNumber % nBrackets`, ensuring
-/// 100% stateless and concurrency-safe bracket partitioning.
+/// Supports `.auto` maximum resource detection based on initial completed trials.
 ///
 /// ### Example
 /// ```swift
-/// let pruner = HyperbandPruner(minResource: 1, maxResource: 81, reductionFactor: 3)
+/// let pruner = HyperbandPruner(minResource: 1, maxResource: .auto, reductionFactor: 3)
 /// let study = try Swiftuna.createStudy(pruner: pruner)
 /// ```
 public struct HyperbandPruner: Pruner {
     /// Minimum resource allocation (initial rung step).
     public let minResource: Int
 
-    /// Maximum resource allocation cap for the most promising trials.
-    public let maxResource: Int
+    /// Maximum resource allocation cap for the most promising trials (supports `.auto` or explicit `.step(Int)`).
+    public let maxResource: ResourceBound
 
     /// Reduction factor $\eta$ governing rung progression and bracket laddering.
     public let reductionFactor: Int
@@ -343,186 +562,188 @@ public struct HyperbandPruner: Pruner {
     /// Minimum number of trials required at each rung before pruning begins.
     public let bootstrapCount: Int
 
-    /// Total number of brackets managed by this Hyperband instance.
-    public let nBrackets: Int
-    private let pruners: [SuccessiveHalvingPruner]
+    /// Precomputed static bracket schedule when `maxResource` is explicit.
+    internal let staticLadder: HyperbandLadder?
 
     /// Initializes a Hyperband pruner.
     ///
     /// - Parameters:
     ///   - minResource: Minimum resource step. Defaults to `1`.
-    ///   - maxResource: Maximum resource step. Defaults to `80`.
+    ///   - maxResource: Maximum resource step bound. Defaults to `80` (or `.auto`).
     ///   - reductionFactor: Resource scaling factor $\eta$. Defaults to `3`.
     ///   - bootstrapCount: Trials required before pruning. Defaults to `0`.
     public init(
         minResource: Int = 1,
-        maxResource: Int = 80,
+        maxResource: ResourceBound = 80,
         reductionFactor: Int = 3,
         bootstrapCount: Int = 0
     ) {
-        let minR = max(1, minResource)
-        let maxR = max(minR, maxResource)
-        let eta = max(2, reductionFactor)
-
-        self.minResource = minR
-        self.maxResource = maxR
-        self.reductionFactor = eta
-        self.bootstrapCount = max(0, bootstrapCount)
-
-        var sMax = 0
-        var resourceCap = minR
-        while resourceCap * eta <= maxR {
-            resourceCap *= eta
-            sMax += 1
+        precondition(
+            bootstrapCount == 0 || maxResource != .auto,
+            "bootstrapCount > 0 and maxResource == .auto are mutually incompatible.")
+        precondition(minResource >= 1, "minResource must be at least 1, got \(minResource).")
+        precondition(reductionFactor >= 2, "reductionFactor must be at least 2, got \(reductionFactor).")
+        precondition(bootstrapCount >= 0, "bootstrapCount must be non-negative, got \(bootstrapCount).")
+        if let m = maxResource.stepValue {
+            precondition(m >= minResource, "maxResource (\(m)) must be >= minResource (\(minResource)).")
+            self.staticLadder = HyperbandLadder(minResource: minResource, maxResource: m, reductionFactor: reductionFactor)
+        } else {
+            self.staticLadder = nil
         }
-        let totalBrackets = sMax + 1
-        self.nBrackets = totalBrackets
 
-        var bracketPruners: [SuccessiveHalvingPruner] = []
-        for s in 0..<totalBrackets {
-            var minRBracket = minR
-            for _ in 0..<s {
-                minRBracket *= eta
-            }
-            bracketPruners.append(
-                SuccessiveHalvingPruner(
-                    minResource: minRBracket,
-                    reductionFactor: eta,
-                    minEarlyStoppingRate: s,
-                    bootstrapCount: bootstrapCount
-                ) { $0.number % totalBrackets == s }
-            )
-        }
-        self.pruners = bracketPruners
+        self.minResource = minResource
+        self.maxResource = maxResource
+        self.reductionFactor = reductionFactor
+        self.bootstrapCount = bootstrapCount
     }
 
-    /// Determines the bracket index assigned to a trial.
-    public func bracket(for trialNumber: Int) -> Int {
-        trialNumber % nBrackets
+    /// Total number of brackets managed by this Hyperband instance, or `nil` if `maxResource` is `.auto` and uninitialized.
+    public var nBrackets: Int? {
+        staticLadder?.totalBrackets
+    }
+
+    /// Determines the bracket index assigned to a trial for a given or resolved total bracket count.
+    public func bracket(for trialNumber: Int, studyName: String? = nil, nBrackets: Int? = nil) -> Int {
+        if let staticLadder {
+            return staticLadder.bracket(for: trialNumber, studyName: studyName)
+        }
+        guard let total = nBrackets, total > 0 else {
+            return 0
+        }
+        return trialNumber % total
     }
 
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool {
-        let b = bracket(for: trialNumber)
-        let pruner = pruners[b]
+        let ladder: HyperbandLadder
+        if let staticLadder {
+            ladder = staticLadder
+        } else {
+            let completed = try study.trials(where: [.complete])
+            let maxSteps = completed.compactMap { $0.intermediateValues.keys.max() }
+            guard let maxStep = maxSteps.max() else {
+                return false  // No completed trials yet to estimate maxResource
+            }
+            ladder = HyperbandLadder(
+                minResource: minResource,
+                maxResource: maxStep + 1,
+                reductionFactor: reductionFactor
+            )
+        }
+
+        let b = ladder.bracket(for: trialNumber, studyName: study.name)
+        let capturedLadder = ladder
+        let capturedStudyName = study.name
+        let pruner = SuccessiveHalvingPruner(
+            minResource: .step(minResource),
+            reductionFactor: reductionFactor,
+            minEarlyStoppingRate: b,
+            bootstrapCount: bootstrapCount
+        ) { trial in
+            capturedLadder.bracket(for: trial.number, studyName: capturedStudyName) == b
+        }
         return try pruner.shouldPrune(
             study: study,
             trialNumber: trialNumber,
             step: step,
-            currentValue: currentValue
+            currentValue: currentValue,
+            intermediateValues: intermediateValues
         )
     }
 }
 
-/// Pruner that wraps another pruner to provide a patience grace period, or acts as a standalone
-/// early-stopping monitor based on stagnation.
+/// Pruner that monitors intermediate values and prunes if the improvement in intermediate values
+/// after a patience period is less than a threshold.
 ///
-/// `PatientPruner` operates in two distinct modes:
-/// 1. **Wrapped Mode** (`wrappedPruner != nil`): Suppresses pruning signals from `wrappedPruner` until
-///    the underlying pruner votes to prune for `patience` consecutive steps.
-/// 2. **Standalone Mode** (`wrappedPruner == nil`): Monitors objective value improvements, pruning the trial
-///    if it fails to improve upon its historical best value by at least `minDelta` within `patience` steps.
+/// In wrapped mode (`wrappedPruner != nil`), pruning signals from the underlying pruner are gated
+/// by stagnation: trials that continue making progress by at least `minDelta` are never pruned.
+///
+/// In standalone mode (`wrappedPruner == nil`), the trial is early-stopped as soon as it stagnates
+/// for `patience` consecutive steps.
+///
+/// `PatientPruner` is completely stateless over `intermediateValues`, eliminating lock contention across workers.
 ///
 /// ### Example
 /// ```swift
-/// // Tolerate up to 3 consecutive prune signals from MedianPruner before actually stopping
+/// // Tolerate up to 3 unimproved steps before delegating to MedianPruner
 /// let base = MedianPruner(nStartupTrials: 5)
 /// let pruner = PatientPruner(wrappedPruner: base, patience: 3)
 /// ```
 public struct PatientPruner: Pruner {
-    /// The underlying pruner whose prune decisions are delayed. If `nil`, operates in standalone mode.
+    /// The underlying pruner whose prune decisions are gated by stagnation. If `nil`, operates in standalone mode.
     public let wrappedPruner: (any Pruner)?
 
-    /// The number of consecutive prune votes or unimproved steps tolerated before pruning triggers.
+    /// Number of consecutive unimproved steps tolerated before pruning triggers or delegates.
     public let patience: Int
 
-    /// Minimum absolute change in objective value considered a meaningful improvement (standalone mode only).
+    /// Minimum absolute change in objective value considered a meaningful improvement.
     public let minDelta: Double
-
-    private struct TrialState: Sendable {
-        var consecutivePruneVotes: Int = 0
-        var bestValue: Double?
-        var consecutiveUnimproved: Int = 0
-    }
-
-    private final class StateBox: Sendable {
-        let states = Mutex<[Int: TrialState]>([:])
-    }
-    private let storage = StateBox()
 
     /// Initializes a Patient pruner.
     ///
     /// - Parameters:
     ///   - wrappedPruner: Optional base pruner to wrap with patience.
     ///   - patience: Consecutive steps tolerated before pruning triggers.
-    ///   - minDelta: Minimum improvement threshold for standalone mode. Defaults to `0.0`.
+    ///   - minDelta: Minimum improvement threshold. Defaults to `0.0`.
     public init(
         wrappedPruner: (any Pruner)? = nil,
         patience: Int,
         minDelta: Double = 0.0
     ) {
+        precondition(patience >= 0, "patience must be non-negative, got \(patience).")
+        precondition(minDelta >= 0.0, "minDelta must be non-negative, got \(minDelta).")
         self.wrappedPruner = wrappedPruner
-        self.patience = max(0, patience)
-        self.minDelta = max(0.0, minDelta)
+        self.patience = patience
+        self.minDelta = minDelta
     }
 
     public func shouldPrune(
         study: Study,
         trialNumber: Int,
         step: Int,
-        currentValue: Double
+        currentValue: Double,
+        intermediateValues: [Int: Double]
     ) throws(SwiftunaError) -> Bool {
-        if let wrapped = wrappedPruner {
-            let baseWantsPrune = try wrapped.shouldPrune(
-                study: study,
-                trialNumber: trialNumber,
-                step: step,
-                currentValue: currentValue
-            )
-
-            return storage.states.withLock { states in
-                var state = states[trialNumber] ?? TrialState()
-                if baseWantsPrune {
-                    state.consecutivePruneVotes += 1
-                    states[trialNumber] = state
-                    return state.consecutivePruneVotes > patience
-                }
-                state.consecutivePruneVotes = 0
-                states[trialNumber] = state
-                return false
-            }
+        let sortedEntries = intermediateValues.sorted { $0.key < $1.key }
+        // Do not prune if number of steps to determine are insufficient (matching Optuna: steps.count <= patience + 1)
+        if sortedEntries.count <= patience + 1 {
+            return false
         }
 
-        // Standalone patience mode
-        return storage.states.withLock { states in
-            var state = states[trialNumber] ?? TrialState()
-            guard let best = state.bestValue else {
-                state.bestValue = currentValue
-                state.consecutiveUnimproved = 0
-                states[trialNumber] = state
-                return false
-            }
+        let splitIdx = sortedEntries.count - patience - 1
+        let scoresBefore = sortedEntries[..<splitIdx].lazy.map(\.value).filter { !$0.isNaN }
+        let scoresAfter = sortedEntries[splitIdx...].lazy.map(\.value).filter { !$0.isNaN }
 
-            let improved: Bool
-            if study.direction == .minimize {
-                improved = currentValue <= best - minDelta
-            } else {
-                improved = currentValue >= best + minDelta
-            }
-
-            if improved {
-                state.bestValue = currentValue
-                state.consecutiveUnimproved = 0
-                states[trialNumber] = state
-                return false
-            }
-            state.consecutiveUnimproved += 1
-            states[trialNumber] = state
-            return state.consecutiveUnimproved > patience
+        guard let minOrMaxBefore = (study.direction == .minimize ? scoresBefore.min() : scoresBefore.max()),
+            let minOrMaxAfter = (study.direction == .minimize ? scoresAfter.min() : scoresAfter.max())
+        else {
+            return false
         }
+
+        let maybePrune: Bool
+        if study.direction == .minimize {
+            maybePrune = minOrMaxBefore + minDelta < minOrMaxAfter
+        } else {
+            maybePrune = minOrMaxBefore - minDelta > minOrMaxAfter
+        }
+
+        if maybePrune {
+            if let wrapped = wrappedPruner {
+                return try wrapped.shouldPrune(
+                    study: study,
+                    trialNumber: trialNumber,
+                    step: step,
+                    currentValue: currentValue,
+                    intermediateValues: intermediateValues
+                )
+            }
+            return true
+        }
+        return false
     }
 }

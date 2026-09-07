@@ -1,0 +1,72 @@
+{
+  "problem_name": "patient_standalone",
+  "seed": 42,
+  "trials": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "params": {
+        "p": 4.707051804024774
+      },
+      "value": 4.0,
+      "intermediate_values": {
+        "0": 10.0,
+        "1": 9.0,
+        "2": 8.0,
+        "3": 7.0,
+        "4": 6.0,
+        "5": 5.0,
+        "6": 4.0
+      }
+    },
+    {
+      "number": 1,
+      "state": "PRUNED",
+      "params": {
+        "p": 7.3938401343051785
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 10.0,
+        "1": 9.0,
+        "2": 10.0,
+        "3": 10.0,
+        "4": 10.0
+      }
+    },
+    {
+      "number": 2,
+      "state": "COMPLETE",
+      "params": {
+        "p": 8.474156107398851
+      },
+      "value": 0.1,
+      "intermediate_values": {
+        "0": 5.0,
+        "1": 4.0,
+        "2": 3.0,
+        "3": 2.0,
+        "4": 1.0,
+        "5": 0.5,
+        "6": 0.1
+      }
+    },
+    {
+      "number": 3,
+      "state": "PRUNED",
+      "params": {
+        "p": 5.420274795906761
+      },
+      "value": null,
+      "intermediate_values": {
+        "0": 8.0,
+        "1": 7.0,
+        "2": 8.0,
+        "3": 8.0,
+        "4": 8.0
+      }
+    }
+  ],
+  "best_trial_number": 2,
+  "best_value": 0.1
+}

@@ -84,7 +84,7 @@ internal struct DecisionTree: Sendable {
     mutating func sampleChild(
         nodeIndex: Int,
         excludeRunning: Bool,
-        rng: inout SplitMix64
+        rng: inout BruteForcePRNG
     ) -> Double? {
         let node = nodes[nodeIndex]
         guard !node.candidateValues.isEmpty else { return nil }
@@ -146,16 +146,35 @@ internal struct DecisionTree: Sendable {
             return candidates.first
         }
 
-        // Weighted random choice using 53-bit double precision from 64-bit generator
-        let r = (Double(rng.next() & 0x1f_ffff_ffff_ffff) / Double(0x20_0000_0000_0000)) * sumWeights
+        let u = rng.nextUniform()
         var cumulative = 0.0
         for i in 0..<candidates.count {
-            cumulative += weights[i]
-            if r <= cumulative || i == candidates.count - 1 {
+            cumulative += weights[i] / sumWeights
+            if u < cumulative || i == candidates.count - 1 {
                 return candidates[i]
             }
         }
         return candidates.last
+    }
+}
+
+/// PRNG abstraction supporting default high-performance SplitMix64 or NumPy MT19937.
+internal enum BruteForcePRNG: Sendable {
+    case splitMix(SplitMix64)
+    case numpy(NumpyMT19937PRNG)
+
+    mutating func nextUniform() -> Double {
+        switch self {
+        case .splitMix(var sm):
+            let raw = sm.next() & 0x1f_ffff_ffff_ffff
+            let val = Double(raw) / Double(0x20_0000_0000_0000)
+            self = .splitMix(sm)
+            return val
+        case .numpy(var np):
+            let val = np.nextUniform()
+            self = .numpy(np)
+            return val
+        }
     }
 }
 
@@ -164,12 +183,21 @@ internal struct BruteForceState: Sendable {
     var tree: DecisionTree = DecisionTree()
     var inFlightPaths: [Int: [Int]] = [:]
     var isExhausted: Bool = false
-    var rng: SplitMix64
+    var rng: BruteForcePRNG
     var avoidPrematureStop: Bool
     var searchSpace: [String: [ParameterValue]]?
 
-    init(seed: UInt64? = nil, avoidPrematureStop: Bool = false, searchSpace: [String: [ParameterValue]]? = nil) {
-        self.rng = SplitMix64(seed: seed ?? 42)
+    init(
+        seed: UInt64? = nil,
+        avoidPrematureStop: Bool = false,
+        searchSpace: [String: [ParameterValue]]? = nil,
+        useNumpyPRNG: Bool = false
+    ) {
+        if useNumpyPRNG {
+            self.rng = .numpy(NumpyMT19937PRNG(seed: UInt32(truncatingIfNeeded: seed ?? 42)))
+        } else {
+            self.rng = .splitMix(SplitMix64(seed: seed ?? 42))
+        }
         self.avoidPrematureStop = avoidPrematureStop
         self.searchSpace = searchSpace
     }

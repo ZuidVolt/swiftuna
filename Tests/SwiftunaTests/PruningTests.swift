@@ -28,23 +28,23 @@ struct PruningTests {
         for _ in 0..<3 {
             var trial = try study.ask()
             for step in 0..<5 {
-                try trial.report(Double(step) * 0.1, step: step)
+                try trial.report(10.0 - Double(step) * 2.0, step: step) // 10.0, 8.0, 6.0, 4.0, 2.0
             }
-            try study.tell(consuming: trial, value: 0.5)
+            try study.tell(consuming: trial, value: 2.0)
         }
 
         #expect((try study.trials).count == 3)
 
-        // Trial 3 has very bad loss at step 3 (> median of 0.3)
+        // Trial 3 has worse performance starting at 15.0
         var trial3 = try study.ask()
-        try trial3.report(0.1, step: 0)
-        try trial3.report(0.2, step: 1)
-        try trial3.report(0.3, step: 2)
+        try trial3.report(15.0, step: 0)
+        try trial3.report(13.0, step: 1)
+        try trial3.report(11.0, step: 2)
 
-        // Warmup steps are 2, so at step 2 it should not prune yet
+        // Warmup steps are 3, so at step 2 it should not prune yet
         #expect(try trial3.shouldPrune == false)
 
-        // At step 3, report 999.0 (much worse than median 0.3)
+        // At step 3, report 999.0 (best-so-far is 11.0, median of baseline at step 3 is 4.0 -> PRUNES!)
         try trial3.report(999.0, step: 3)
         #expect(try trial3.shouldPrune == true)
 
@@ -71,21 +71,21 @@ struct PruningTests {
             pruner: pruner
         )
 
-        // Startup trials
+        // Startup trials (decreasing loss: 10, 8, 6, 4)
         for _ in 0..<2 {
             try study.optimize(nTrials: 1) { trial in
                 for step in 0..<4 {
-                    try trial.report(Double(step) * 1.0, step: step)
+                    try trial.report(10.0 - Double(step) * 2.0, step: step)
                 }
                 return 4.0
             }
         }
 
-        // Trial that gets pruned inside the closure
+        // Trial that gets pruned inside the closure at step 2
         try study.optimize(nTrials: 1) { trial in
             for step in 0..<4 {
-                let loss = (step >= 2) ? 1000.0 : Double(step)
-                // This will throw SwiftunaError.trialPruned at step 2
+                let loss = (step >= 2) ? 1000.0 : (step == 0 ? 10.0 : 7.0)
+                // This will throw SwiftunaError.trialPruned at step 2 (best-so-far 7.0 > step 2 median 6.0)
                 try trial.report(loss, step: step, pruneIfWorse: true)
             }
             return 1000.0

@@ -111,21 +111,19 @@ struct AdvancedPruningTests {
         var t0 = try studyWrapped.ask()
         // Step 0: 2.0 (below 5.0)
         try t0.report(2.0, step: 0)
-        #expect(try !wrappedPruner.shouldPrune(study: studyWrapped, trialNumber: t0.number, step: 0, currentValue: 2.0))
+        #expect(try !t0.shouldPrune)
 
         // Step 1: 10.0 (exceeds threshold! But patience=2 allows it)
         try t0.report(10.0, step: 1)
-        #expect(
-            try !wrappedPruner.shouldPrune(study: studyWrapped, trialNumber: t0.number, step: 1, currentValue: 10.0))
+        #expect(try !t0.shouldPrune)
 
         // Step 2: 10.0 (second violation, still within patience limit of 2 steps)
         try t0.report(10.0, step: 2)
-        #expect(
-            try !wrappedPruner.shouldPrune(study: studyWrapped, trialNumber: t0.number, step: 2, currentValue: 10.0))
+        #expect(try !t0.shouldPrune)
 
         // Step 3: 10.0 (third violation, patience exhausted! Pruning triggers)
         try t0.report(10.0, step: 3)
-        #expect(try wrappedPruner.shouldPrune(study: studyWrapped, trialNumber: t0.number, step: 3, currentValue: 10.0))
+        #expect(try t0.shouldPrune)
         try studyWrapped.tell(consuming: t0, values: [], state: .pruned)
 
         // 2. Standalone mode: No wrapped pruner, stops when not improving for patience = 2
@@ -144,33 +142,23 @@ struct AdvancedPruningTests {
         var t1 = try studyStandalone.ask()
         // Step 0: 5.0
         try t1.report(5.0, step: 0)
-        #expect(
-            try !standalonePruner.shouldPrune(
-                study: studyStandalone, trialNumber: t1.number, step: 0, currentValue: 5.0))
+        #expect(try !t1.shouldPrune)
 
-        // Step 1: 4.0 (improved by 1.0 > 0.5 minDelta!)
+        // Step 1: 4.0
         try t1.report(4.0, step: 1)
-        #expect(
-            try !standalonePruner.shouldPrune(
-                study: studyStandalone, trialNumber: t1.number, step: 1, currentValue: 4.0))
+        #expect(try !t1.shouldPrune)
 
-        // Step 2: 4.0 (no improvement, 1 step)
-        try t1.report(4.0, step: 2)
-        #expect(
-            try !standalonePruner.shouldPrune(
-                study: studyStandalone, trialNumber: t1.number, step: 2, currentValue: 4.0))
+        // Step 2: 4.6 (worsens, but steps <= patience + 1)
+        try t1.report(4.6, step: 2)
+        #expect(try !t1.shouldPrune)
 
-        // Step 3: 4.0 (no improvement, 2 steps: patience boundary)
-        try t1.report(4.0, step: 3)
-        #expect(
-            try !standalonePruner.shouldPrune(
-                study: studyStandalone, trialNumber: t1.number, step: 3, currentValue: 4.0))
+        // Step 3: 4.6 (scoresBefore includes step 1 at 4.0, minAfter still overlaps 4.0)
+        try t1.report(4.6, step: 3)
+        #expect(try !t1.shouldPrune)
 
-        // Step 4: 4.0 (no improvement, 3 steps: patience exhausted!)
-        try t1.report(4.0, step: 4)
-        #expect(
-            try standalonePruner.shouldPrune(study: studyStandalone, trialNumber: t1.number, step: 4, currentValue: 4.0)
-        )
+        // Step 4: 4.6 (scoresBefore min is 4.0, scoresAfter min is 4.6; 4.0 + 0.5 < 4.6 -> prunes!)
+        try t1.report(4.6, step: 4)
+        #expect(try t1.shouldPrune)
         try studyStandalone.tell(consuming: t1, values: [], state: .pruned)
     }
 }
