@@ -12,7 +12,7 @@ import PackageDescription
 
 let package = Package(
     name: "MyOptimizer",
-    platforms: [.macOS(.v13), .iOS(.v16)],
+    platforms: [.macOS(.v26)],
     dependencies: [
         .package(url: "https://github.com/ZuidVolt/swiftuna.git", from: "main")
     ],
