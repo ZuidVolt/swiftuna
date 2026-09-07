@@ -87,6 +87,8 @@ if let best = try study.bestTrial {
 - ``CMASampler``
 - ``QMCSampler``
 - ``GridSampler``
+- ``BruteForceSampler``
+- ``PartialFixedSampler``
 - ``NSGAIISampler``
 - ``RandomSampler``
 - ``CallbackSampler``

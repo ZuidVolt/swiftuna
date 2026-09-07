@@ -119,8 +119,9 @@ internal func makeStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to create study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: directions, pruner: pruner, storage: storage,
-                 mayInvokeSamplerCallbacks: sampler is CallbackSampler)
+    return Study(
+        raw: studyPtr, name: name, directions: directions, pruner: pruner, storage: storage,
+        mayInvokeSamplerCallbacks: sampler is CallbackSampler)
 }
 
 /// Creates a multi-objective study with custom sampler and optional pruner.
@@ -142,10 +143,10 @@ public func createStudy<S: Sampler>(
     )
 }
 
-/// Creates a single-objective study with a custom Swift sampler (e.g. ``CMASampler``).
+/// Creates a single-objective study with a custom Swift sampler (e.g. ``CMASampler``, ``BruteForceSampler``).
 ///
-/// Binds a zero-overhead background sampler to the underlying Rustuna study to
-/// eliminate background TPESampler overhead, and attaches the custom sampler so
+/// Binds the sampler's ``CustomSampler/underlyingSampler`` (if supplied) or a zero-overhead ``RandomSampler``
+/// to the underlying Rustuna study, and attaches the custom sampler so
 /// ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` automatically drives it.
 public func createStudy(
     name: String = "default",
@@ -155,11 +156,12 @@ public func createStudy(
     pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
+    let base: any Sampler = sampler.underlyingSampler ?? RandomSampler(seed: 42)
     let study = try makeStudy(
         name: name,
         directions: [direction],
         storage: storage,
-        sampler: RandomSampler(seed: 42),
+        sampler: base,
         pruner: pruner,
         loadIfExists: loadIfExists
     )
@@ -176,11 +178,12 @@ public func createStudy(
     pruner: any Pruner = NopPruner(),
     loadIfExists: Bool = false
 ) throws(SwiftunaError) -> Study {
+    let base: any Sampler = sampler.underlyingSampler ?? RandomSampler(seed: 42)
     let study = try makeStudy(
         name: name,
         directions: directions,
         storage: storage,
-        sampler: RandomSampler(seed: 42),
+        sampler: base,
         pruner: pruner,
         loadIfExists: loadIfExists
     )
@@ -247,8 +250,9 @@ internal func makeLoadStudy<S: Sampler>(
         throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to load study '\(name)'")
     }
 
-    return Study(raw: studyPtr, name: name, directions: [.minimize], pruner: pruner, storage: storage,
-                 mayInvokeSamplerCallbacks: sampler is CallbackSampler)
+    return Study(
+        raw: studyPtr, name: name, directions: [.minimize], pruner: pruner, storage: storage,
+        mayInvokeSamplerCallbacks: sampler is CallbackSampler)
 }
 
 /// Loads an existing study from persistent storage with custom sampler and pruner.
@@ -290,10 +294,11 @@ public func loadStudy(
     sampler: any CustomSampler,
     pruner: any Pruner = NopPruner()
 ) throws(SwiftunaError) -> Study {
+    let base: any Sampler = sampler.underlyingSampler ?? RandomSampler(seed: 42)
     let study = try makeLoadStudy(
         name: name,
         storage: storage,
-        sampler: RandomSampler(seed: 42),
+        sampler: base,
         pruner: pruner
     )
     study.customSampler = sampler

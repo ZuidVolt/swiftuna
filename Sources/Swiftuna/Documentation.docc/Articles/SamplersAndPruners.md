@@ -18,6 +18,8 @@ Hyperparameter optimization pairs two distinct mechanisms:
 | ``CMASampler`` | Covariance Matrix Adaptation (Active CMA-ES) | Continuous numerical optimization, ill-conditioned surfaces, high dimensional spaces | Single only | Unit-box clipping / resampling |
 | ``QMCSampler`` | Quasi-Monte Carlo (Sobol) | Low-discrepancy space filling | Single only | No |
 | ``GridSampler`` | Cartesian product grid | Small discrete spaces, ablation sweeps | Single only | No |
+| ``BruteForceSampler`` | Dynamic prefix decision tree | Exhaustive search over discrete, step-float, and conditional spaces | Yes | No |
+| ``PartialFixedSampler`` | Parameter partitioning | Enforcing fixed subsets while delegating free parameters | Inherited | Inherited |
 | ``NSGAIISampler`` | Genetic evolutionary algorithm | Multi-objective Pareto frontier discovery | Yes (Native) | Constrained-domination |
 | ``RandomSampler`` | Uniform random search | Fast baseline, high-noise environments | Yes | No |
 | ``CallbackSampler`` | Swift closures called per suggestion | Custom strategies, conditional spaces | Yes | No (falls through to tell) |
@@ -96,6 +98,63 @@ let grid: [String: GridSampler.ValueList] = [
 
 let sampler = GridSampler(searchSpace: grid, seed: 42)
 let study = try Swiftuna.createStudy(sampler: sampler)
+```
+
+### Dynamic exhaustive search (``BruteForceSampler``)
+
+While ``GridSampler`` requires upfront static Cartesian product declarations, ``BruteForceSampler`` dynamically discovers parameter spaces, ranges, and conditional branching as the objective executes. It builds an internal prefix decision tree where each node represents a parameter choice, tracking four lifecycle states:
+- **Unexpanded:** A candidate choice identified by the distribution but not yet evaluated.
+- **Running:** A branch currently undergoing evaluation by an active trial.
+- **Leaf:** A completed terminal parameter combination.
+- **Internal:** An intermediate decision node branching into subsequent parameter decisions.
+
+Candidate selection blends exact uniform sampling with flat uniform sampling ($\alpha = 0.5$) over unexpanded subtree counts:
+
+$$w_i = (1 - \alpha) \frac{u_i}{\sum_j u_j} + \alpha \frac{\mathbb{I}(u_i > 0)}{\sum_j \mathbb{I}(u_j > 0)}$$
+
+This balancing prevents starvation of deeper or conditional branches. When all paths are exhausted, ``Study/optimize(nTrials:timeout:objective:)-3gyl5`` stops automatically, and manual ``Study/ask()`` throws ``SwiftunaError/searchSpaceExhausted(_:)``.
+
+```swift
+let sampler = BruteForceSampler(seed: 42)
+let study = try Swiftuna.createStudy(sampler: sampler)
+
+try study.optimize(nTrials: 100) { trial in
+    let model = try trial.suggest("model", choices: ["linear", "mlp"])
+    if model == "linear" {
+        let reg = try trial.suggest("reg", in: 0.1...0.3, step: 0.1)
+        return evaluateLinear(reg: reg)
+    } else {
+        let layers = try trial.suggest("layers", in: 1...3)
+        return evaluateMLP(layers: layers)
+    }
+}
+```
+
+### Partial parameter fixing (``PartialFixedSampler``)
+
+``PartialFixedSampler`` pins a designated dictionary of hyperparameters to fixed values while delegating all remaining free parameters to a base sampler. This enables ablation experiments, sensitivity tests, or targeted fine-tuning where certain architecture choices are held constant while training hyperparameters continue to be optimized.
+
+The delegate sampler can be a Rustuna engine sampler (such as ``TPESampler`` or ``QMCSampler``) or a native Swift custom sampler (such as ``CMASampler``):
+
+```swift
+// Fix architecture choices; optimize learning rate and weight decay with TPE
+let fixed: [String: ParameterValue] = [
+    "layers": .int(4),
+    "activation": .string("gelu")
+]
+
+let sampler = PartialFixedSampler(
+    fixedParams: fixed,
+    baseSampler: TPESampler(seed: 42)
+)
+
+let study = try Swiftuna.createStudy(sampler: sampler)
+try study.optimize(nTrials: 50) { trial in
+    let layers = try trial.suggest("layers", in: 1...8) // Always returns 4
+    let act = try trial.suggest("activation", choices: ["relu", "gelu", "swish"]) // Always returns "gelu"
+    let lr = try trial.suggest("lr", in: 1e-4...1e-1, log: true) // Explored by TPE
+    return trainModel(layers: layers, activation: act, lr: lr)
+}
 ```
 
 ### Genetic evolutionary search (``NSGAIISampler``)

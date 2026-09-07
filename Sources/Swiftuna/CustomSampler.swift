@@ -142,6 +142,17 @@ public protocol CustomSampler: Sendable {
     /// at large trial counts while Rustuna's storage still retains all parameters.
     var retainsParameterHistory: Bool { get }
 
+    /// Whether the sampler has completely exhausted its search space.
+    ///
+    /// When `true`, ``Study/ask()`` and the optimization loop terminate early with
+    /// ``SwiftunaError/searchSpaceExhausted(_:)``. Defaults to `false`.
+    var isExhausted: Bool { get }
+
+    /// Underlying Rustuna ``Sampler`` used for background trial checkout.
+    ///
+    /// Defaults to `self as? (any Sampler)` if conforming, or `nil` (which defaults to `RandomSampler`).
+    var underlyingSampler: (any Sampler)? { get }
+
     /// Proposes the next trial configuration from history.
     ///
     /// - Parameters:
@@ -153,6 +164,8 @@ public protocol CustomSampler: Sendable {
 
 extension CustomSampler {
     public var retainsParameterHistory: Bool { true }
+    public var isExhausted: Bool { false }
+    public var underlyingSampler: (any Sampler)? { self as? (any Sampler) }
 }
 
 /// A custom suggestion closure: the function form of ``CustomSampler``.
@@ -235,6 +248,9 @@ extension Study {
             do {
                 let snap = StudyHistory(all: history, newSince: seen, best: runningBest)
                 fixed = try sampler.sample(history: snap, trialNumber: history.count)
+            } catch {
+                if isSearchSpaceExhausted(error) { break }
+                throw error
             }
             // Mark everything seen *before* suggesting: the next call's `new`
             // is exactly what completed since this one.

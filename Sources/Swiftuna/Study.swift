@@ -142,6 +142,9 @@ public final class Study: @unchecked Sendable {
     /// ```
     public func ask() throws(SwiftunaError) -> Trial {
         try checkNotInCallback()
+        if customSampler?.isExhausted == true {
+            throw SwiftunaError.searchSpaceExhausted("Search space fully explored")
+        }
         guard let raw else {
             throw SwiftunaError.handleExpired("Study handle is expired or invalid")
         }
@@ -690,13 +693,15 @@ public final class Study: @unchecked Sendable {
             throw SwiftunaError.fromLastError(fallbackCode: status, context: "Failed to copy study '\(name)'")
         }
 
-        return Study(
+        let copy = Study(
             raw: outStudy,
             name: targetName,
             directions: directions,
             storage: destination,
             mayInvokeSamplerCallbacks: mayInvokeSamplerCallbacks
         )
+        copy.customSampler = customSampler
+        return copy
     }
 
     private func parseTrialsBuffer(

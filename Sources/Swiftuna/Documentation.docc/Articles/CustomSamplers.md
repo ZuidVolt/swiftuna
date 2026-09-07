@@ -201,6 +201,45 @@ try study.optimize(nTrials: 1000) { trial in
 
 ---
 
+## Built-in hybrid custom samplers
+
+Swiftuna ships two specialized custom samplers that demonstrate composition and dynamic space exploration:
+
+### PartialFixedSampler: Parameter partitioning
+
+``PartialFixedSampler`` pins designated parameters to fixed values while delegating remaining free parameters to another sampler. It conforms to ``CustomSampler`` and supports both native Swift strategies (such as ``CMASampler``) and Rustuna engine samplers (such as ``TPESampler``):
+
+```swift
+let sampler = PartialFixedSampler(
+    fixedParams: ["batch_size": .int(64), "optimizer": .string("adamw")],
+    baseSampler: TPESampler(seed: 42)
+)
+let study = try Swiftuna.createStudy(sampler: sampler)
+```
+
+When delegating to a ``CustomSampler``, ``PartialFixedSampler`` merges the fixed dictionary over the base sampler's proposals. When delegating to a Rustuna ``Sampler``, it uses atomic `askEnqueued` delivery.
+
+### BruteForceSampler: Dynamic prefix decision tree
+
+``BruteForceSampler`` dynamically discovers parameter domains, step sizes, and conditional branching during define-by-run execution. It models the exploration space as a prefix decision tree protected by `Synchronization.Mutex` with pure `Sendable` value types (zero `@unchecked Sendable` annotations).
+
+It blends exact uniform sampling with flat uniform sampling ($\alpha = 0.5$) over unexpanded candidate branches to prevent branch starvation. When all paths are explored, `sample(history:trialNumber:)` throws ``SwiftunaError/searchSpaceExhausted(_:)``, automatically stopping the optimization loop.
+
+```swift
+let sampler = BruteForceSampler(seed: 42)
+let study = try Swiftuna.createStudy(sampler: sampler)
+try study.optimize(nTrials: 50) { trial in
+    let model = try trial.suggest("model", choices: ["linear", "mlp"])
+    if model == "linear" {
+        return try trial.suggest("reg", in: 0.1...0.3, step: 0.1)
+    } else {
+        return try trial.suggest("layers", in: 1...3)
+    }
+}
+```
+
+---
+
 ## Comparison with Optuna and Rustuna
 
 Optuna's custom sampler interface centers on `BaseSampler` (`ref/optuna/optuna/samplers/_base.py`). It uses `sample_independent` for single parameters, `sample_relative` for joint decisions over an inferred space, and `study.trials` queries for history.

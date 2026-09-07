@@ -1,13 +1,14 @@
 import Foundation
 import Swiftuna
+
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #endif
 
 let D = 50
-let N_BENCH_TRIALS = 10000
+let N_BENCH_TRIALS = 250000
 let SEED: UInt64 = 42
 
 func logMsg(_ msg: String) {
@@ -30,9 +31,9 @@ func getPeakMemoryMB() -> Double {
     var rusage = rusage()
     getrusage(RUSAGE_SELF, &rusage)
     #if canImport(Darwin)
-    return Double(rusage.ru_maxrss) / (1024.0 * 1024.0)
+        return Double(rusage.ru_maxrss) / (1024.0 * 1024.0)
     #else
-    return Double(rusage.ru_maxrss) / 1024.0
+        return Double(rusage.ru_maxrss) / 1024.0
     #endif
 }
 
