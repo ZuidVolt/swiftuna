@@ -59,9 +59,25 @@ internal struct DecisionTree: Sendable {
         return count
     }
 
-    /// Returns whether any unexpanded branches exist in the subtree.
+    /// Returns whether any unexpanded branches exist in the subtree with short-circuiting traversal.
     func isAnyExpandable(nodeIndex: Int = 0, excludeRunning: Bool) -> Bool {
-        countUnexpanded(nodeIndex: nodeIndex, excludeRunning: excludeRunning) > 0
+        let node = nodes[nodeIndex]
+        if node.isLeaf {
+            return false
+        }
+        if node.candidateValues.isEmpty {
+            return !(excludeRunning && node.isRunning)
+        }
+        for cand in node.candidateValues {
+            if let childIdx = node.children[cand] {
+                if isAnyExpandable(nodeIndex: childIdx, excludeRunning: excludeRunning) {
+                    return true
+                }
+            } else {
+                return true
+            }
+        }
+        return false
     }
 
     /// Blended uniform sampling with flat uniform sampling (alpha = 0.5) matching Optuna's `sample_child`.
@@ -176,15 +192,21 @@ internal struct BruteForceState: Sendable {
 
     /// Synchronizes tree state with finished trials from ``StudyHistory``.
     mutating func synchronize(with history: StudyHistory) {
-        for trial in history.all {
+        if inFlightPaths.isEmpty {
+            return
+        }
+        for trial in history.all.reversed() {
             if let path = inFlightPaths.removeValue(forKey: trial.number), let lastNode = path.last {
                 tree.nodes[lastNode].isLeaf = true
                 for idx in path {
                     tree.nodes[idx].isRunning = false
                 }
             }
+            if inFlightPaths.isEmpty {
+                break
+            }
         }
-        if !tree.isAnyExpandable(nodeIndex: 0, excludeRunning: false) && inFlightPaths.isEmpty {
+        if inFlightPaths.isEmpty && !tree.isAnyExpandable(nodeIndex: 0, excludeRunning: false) {
             isExhausted = true
         }
     }
