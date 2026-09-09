@@ -168,4 +168,127 @@ struct ConstrainedOptimizationTests {
         let feasiblePareto = paretoTrials.feasible()
         #expect(!feasiblePareto.isEmpty)
     }
+
+    @Test("bestFeasible handling on empty, infeasible, incomplete, and mixed PersistedTrial sequences")
+    func testBestFeasibleSequenceOperations() throws {
+        // 1. Empty sequence returns nil
+        let emptyTrials: [PersistedTrial] = []
+        #expect(emptyTrials.bestFeasible(direction: .minimize) == nil)
+        #expect(emptyTrials.bestFeasible(direction: .maximize) == nil)
+
+        // 2. Sequence with only infeasible trials returns nil
+        let infeasibleTrials = [
+            PersistedTrial(
+                number: 0,
+                state: .complete,
+                value: 1.0,
+                params: [:],
+                constraints: ["c1": 0.5]
+            ),
+            PersistedTrial(
+                number: 1,
+                state: .complete,
+                value: 0.1,
+                params: [:],
+                constraints: ["c1": 0.001, "c2": -0.5]
+            )
+        ]
+        #expect(infeasibleTrials.bestFeasible(direction: .minimize) == nil)
+        #expect(infeasibleTrials.bestFeasible(direction: .maximize) == nil)
+
+        // 3. Sequence with feasible trials that are non-completed returns nil
+        let nonCompletedTrials = [
+            PersistedTrial(
+                number: 0,
+                state: .running,
+                value: 1.0,
+                params: [:],
+                constraints: ["c1": -1.0]
+            ),
+            PersistedTrial(
+                number: 1,
+                state: .pruned,
+                value: 0.5,
+                params: [:],
+                constraints: ["c1": -0.2]
+            ),
+            PersistedTrial(
+                number: 2,
+                state: .fail,
+                value: nil,
+                params: [:],
+                constraints: ["c1": -0.1]
+            ),
+            PersistedTrial(
+                number: 3,
+                state: .waiting,
+                value: nil,
+                params: [:],
+                constraints: ["c1": 0.0]
+            )
+        ]
+        #expect(nonCompletedTrials.bestFeasible(direction: .minimize) == nil)
+        #expect(nonCompletedTrials.bestFeasible(direction: .maximize) == nil)
+
+        // 4. Sequence with completed feasible trials having nil value returns nil
+        let nilValueFeasibleTrial = [
+            PersistedTrial(
+                number: 0,
+                state: .complete,
+                value: nil,
+                values: [],
+                params: [:],
+                constraints: ["c1": -0.5]
+            )
+        ]
+        #expect(nilValueFeasibleTrial.bestFeasible(direction: .minimize) == nil)
+        #expect(nilValueFeasibleTrial.bestFeasible(direction: .maximize) == nil)
+
+        // 5. Mixed sequence testing minimize and maximize directions
+        let tInfeasible = PersistedTrial(
+            number: 0,
+            state: .complete,
+            value: 1.0,
+            params: [:],
+            constraints: ["c1": 0.1]
+        )
+        let tPruned = PersistedTrial(
+            number: 1,
+            state: .pruned,
+            value: 2.0,
+            params: [:],
+            constraints: ["c1": -0.5]
+        )
+        let tFeasibleA = PersistedTrial(
+            number: 2,
+            state: .complete,
+            value: 10.0,
+            params: [:],
+            constraints: ["c1": -0.1]
+        )
+        let tFeasibleB = PersistedTrial(
+            number: 3,
+            state: .complete,
+            value: 5.0,
+            params: [:],
+            constraints: ["c1": 0.0]
+        )
+        let tFeasibleC = PersistedTrial(
+            number: 4,
+            state: .complete,
+            value: 15.0,
+            params: [:],
+            constraints: ["c1": -1.0]
+        )
+
+        let mixedSequence = [tInfeasible, tPruned, tFeasibleA, tFeasibleB, tFeasibleC]
+
+        let minBest = try #require(mixedSequence.bestFeasible(direction: .minimize))
+        #expect(minBest.number == 3)
+        #expect(minBest.value == 5.0)
+
+        let maxBest = try #require(mixedSequence.bestFeasible(direction: .maximize))
+        #expect(maxBest.number == 4)
+        #expect(maxBest.value == 15.0)
+    }
 }
