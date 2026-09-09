@@ -39,10 +39,14 @@ struct ConstrainedOptimizationTests {
             try trial.setConstraint("power_budget", value: 0.0)
         }
 
-        // Non-finite constraint values throw invalidArgument error
-        #expect(throws: SwiftunaError.self) {
+        // NaN constraint values throw invalidArgument error
+        #expect(throws: SwiftunaError.invalidArgument("Constraint value for 'bad_nan' cannot be NaN")) {
             try trial.setConstraint("bad_nan", value: Double.nan)
         }
+
+        // Infinity constraint values are allowed by validateConstraint and setConstraint
+        try trial.setConstraint("inf_constraint", value: Double.infinity)
+        #expect(trial.constraints["inf_constraint"] == Double.infinity)
 
         #expect(trial.constraints["max_latency"] == -2.5)
         #expect(trial.constraints["power_budget"] == 1.2)
@@ -167,5 +171,22 @@ struct ConstrainedOptimizationTests {
         // Any trial on the Pareto frontier when feasible solutions exist should be feasible
         let feasiblePareto = paretoTrials.feasible()
         #expect(!feasiblePareto.isEmpty)
+    }
+
+    @Test("validateConstraint edge case validation for NaN, infinity, and finite values")
+    func testValidateConstraintEdgeCases() throws {
+        // Finite constraint values must pass
+        try validateConstraint(name: "zero", value: 0.0)
+        try validateConstraint(name: "positive", value: 123.456)
+        try validateConstraint(name: "negative", value: -789.012)
+
+        // Infinity and negative infinity constraint values must pass
+        try validateConstraint(name: "pos_inf", value: Double.infinity)
+        try validateConstraint(name: "neg_inf", value: -Double.infinity)
+
+        // NaN constraint value must throw invalidArgument error
+        #expect(throws: SwiftunaError.invalidArgument("Constraint value for 'test_nan' cannot be NaN")) {
+            try validateConstraint(name: "test_nan", value: Double.nan)
+        }
     }
 }
