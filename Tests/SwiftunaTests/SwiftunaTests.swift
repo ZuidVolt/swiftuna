@@ -468,4 +468,56 @@ struct EnqueueAndImportanceTests {
         #expect(maxTrial?.number == 2)
         #expect(maxTrial?.value == 0.8)
     }
+
+    @Test("sortedByValue edge cases: sort stability, identical values, and nil filtering")
+    func testSortedByValueEdgeCases() throws {
+        // 1. Empty sequence
+        let emptyTrials: [PersistedTrial] = []
+        #expect(emptyTrials.sortedByValue(ascending: true).isEmpty)
+        #expect(emptyTrials.sortedByValue(ascending: false).isEmpty)
+
+        // 2. Single trial with nil value vs single trial with value
+        let nilTrial = PersistedTrial(number: 0, state: .fail, value: nil, params: [:])
+        let validTrial = PersistedTrial(number: 1, state: .complete, value: 42.0, params: [:])
+        #expect([nilTrial].sortedByValue().isEmpty)
+        #expect([validTrial].sortedByValue().map(\.number) == [1])
+
+        // 3. Sort stability with duplicate / identical values and nil values intermixed
+        let t0 = PersistedTrial(number: 0, state: .complete, value: 10.0, params: [:])
+        let t1 = PersistedTrial(number: 1, state: .fail, value: nil, params: [:])
+        let t2 = PersistedTrial(number: 2, state: .complete, value: 5.0, params: [:])
+        let t3 = PersistedTrial(number: 3, state: .complete, value: 10.0, params: [:])
+        let t4 = PersistedTrial(number: 4, state: .pruned, value: nil, params: [:])
+        let t5 = PersistedTrial(number: 5, state: .complete, value: 5.0, params: [:])
+        let t6 = PersistedTrial(number: 6, state: .complete, value: 10.0, params: [:])
+
+        let trials = [t0, t1, t2, t3, t4, t5, t6]
+
+        // Ascending sort:
+        // Expected values order: 5.0, 5.0, 10.0, 10.0, 10.0
+        // Expected trial numbers preserving stability for equal values:
+        // 5.0 group: t2 (number 2), t5 (number 5)
+        // 10.0 group: t0 (number 0), t3 (number 3), t6 (number 6)
+        let sortedAsc = trials.sortedByValue(ascending: true)
+        #expect(sortedAsc.map(\.number) == [2, 5, 0, 3, 6])
+        #expect(sortedAsc.map(\.value) == [5.0, 5.0, 10.0, 10.0, 10.0])
+
+        // Descending sort:
+        // Expected values order: 10.0, 10.0, 10.0, 5.0, 5.0
+        // Expected trial numbers preserving stability for equal values:
+        // 10.0 group: t0 (number 0), t3 (number 3), t6 (number 6)
+        // 5.0 group: t2 (number 2), t5 (number 5)
+        let sortedDesc = trials.sortedByValue(ascending: false)
+        #expect(sortedDesc.map(\.number) == [0, 3, 6, 2, 5])
+        #expect(sortedDesc.map(\.value) == [10.0, 10.0, 10.0, 5.0, 5.0])
+
+        // 4. All identical values
+        let identicalValTrials = [
+            PersistedTrial(number: 10, state: .complete, value: 7.0, params: [:]),
+            PersistedTrial(number: 11, state: .complete, value: 7.0, params: [:]),
+            PersistedTrial(number: 12, state: .complete, value: 7.0, params: [:]),
+        ]
+        #expect(identicalValTrials.sortedByValue(ascending: true).map(\.number) == [10, 11, 12])
+        #expect(identicalValTrials.sortedByValue(ascending: false).map(\.number) == [10, 11, 12])
+    }
 }
