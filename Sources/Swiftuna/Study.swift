@@ -246,7 +246,7 @@ public final class Study: @unchecked Sendable {
     ) throws(SwiftunaError) {
         let trialNumber = trial.number
         let intermediateSteps = Dictionary(
-            uniqueKeysWithValues: trial.intermediateSteps.map { ($0.step, $0.value) }
+            uniqueKeysWithValues: trial.intermediateSteps.lazy.map { ($0.step, $0.value) }
         )
         _ = trial.takeHandle()  // Release from trial deinit
 
