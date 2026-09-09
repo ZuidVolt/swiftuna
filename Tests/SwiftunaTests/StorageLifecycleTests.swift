@@ -121,6 +121,82 @@ struct StorageLifecycleTests {
         #expect(procSummaries.count == 3)
     }
 
+
+    @Test("Swiftuna.getStudies(in:) top-level global function across storage backends and edge cases")
+    func testGetStudiesGlobalFunction() throws {
+        let dbURL = makeTempDBURL()
+        let journalURL = makeTempDBURL()
+        defer {
+            try? FileManager.default.removeItem(at: dbURL)
+            try? FileManager.default.removeItem(at: journalURL)
+        }
+
+        let sqliteStorage = StorageBackend.sqlite(url: dbURL)
+        let journalStorage = StorageBackend.journal(url: journalURL)
+
+        // 1. Empty storage returns empty array via getStudies
+        let emptySQLiteStudies = try Swiftuna.getStudies(in: sqliteStorage)
+        #expect(emptySQLiteStudies.isEmpty)
+
+        let emptyJournalStudies = try Swiftuna.getStudies(in: journalStorage)
+        #expect(emptyJournalStudies.isEmpty)
+
+        // 2. Create single and multi-objective studies with attributes
+        let study1 = try Swiftuna.createStudy(
+            name: "single_obj_study",
+            direction: .maximize,
+            storage: sqliteStorage
+        )
+        try study1.setUserAttr("env", value: "prod")
+        try study1.optimize(nTrials: 7) { _ in 42.0 }
+
+        let study2 = try Swiftuna.createStudy(
+            name: "multi_obj_study",
+            directions: [.minimize, .maximize],
+            storage: sqliteStorage
+        )
+        try study2.setUserAttr("env", value: "staging")
+        try study2.optimize(nTrials: 3) { _ in [1.0, 2.0] }
+
+        // 3. Query via Swiftuna.getStudies(in:)
+        let studies = try Swiftuna.getStudies(in: sqliteStorage)
+        #expect(studies.count == 2)
+
+        let singleObj = try #require(studies.named("single_obj_study"))
+        #expect(singleObj.name == "single_obj_study")
+        #expect(singleObj.directions == [.maximize])
+        #expect(singleObj.direction == .maximize)
+        #expect(singleObj.trialCount == 7)
+        #expect(singleObj.userAttrs["env"] == "prod")
+
+        let multiObj = try #require(studies.named("multi_obj_study"))
+        #expect(multiObj.name == "multi_obj_study")
+        #expect(multiObj.directions == [.minimize, .maximize])
+        #expect(multiObj.direction == .minimize)
+        #expect(multiObj.trialCount == 3)
+        #expect(multiObj.userAttrs["env"] == "staging")
+
+        // 4. Verify Journal storage backend with getStudies
+        let journalStudy = try Swiftuna.createStudy(
+            name: "journal_test_study",
+            direction: .minimize,
+            storage: journalStorage
+        )
+        try journalStudy.optimize(nTrials: 4) { _ in 0.5 }
+
+        let journalSummaries = try Swiftuna.getStudies(in: journalStorage)
+        #expect(journalSummaries.count == 1)
+        #expect(journalSummaries[0].name == "journal_test_study")
+        #expect(journalSummaries[0].trialCount == 4)
+
+        // 5. Deletion is reflected in getStudies(in:)
+        try Swiftuna.deleteStudy(named: "single_obj_study", in: sqliteStorage)
+        let remainingStudies = try Swiftuna.getStudies(in: sqliteStorage)
+        #expect(remainingStudies.count == 1)
+        #expect(remainingStudies[0].name == "multi_obj_study")
+    }
+
+
     @Test("Deleting a study cascades to all trials and removes from database")
     func testDeleteStudyAndCascadingCleanUp() throws {
         let dbURL = makeTempDBURL()
