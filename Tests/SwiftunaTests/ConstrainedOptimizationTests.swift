@@ -168,4 +168,107 @@ struct ConstrainedOptimizationTests {
         let feasiblePareto = paretoTrials.feasible()
         #expect(!feasiblePareto.isEmpty)
     }
+
+    @Test("bestFeasible on PersistedTrial sequence handles empty, infeasible, non-completed, and directional optimization")
+    func testBestFeasibleSequenceOperations() {
+        // 1. Empty sequence
+        let emptyTrials: [PersistedTrial] = []
+        #expect(emptyTrials.bestFeasible() == nil)
+        #expect(emptyTrials.bestFeasible(direction: .maximize) == nil)
+
+        // 2. Sequence with only infeasible trials
+        let infeasibleTrials = [
+            PersistedTrial(
+                number: 0,
+                state: .complete,
+                value: 10.0,
+                params: [:],
+                constraints: ["c1": 0.1]
+            ),
+            PersistedTrial(
+                number: 1,
+                state: .complete,
+                value: 5.0,
+                params: [:],
+                constraints: ["c1": 1.5, "c2": -0.5]
+            )
+        ]
+        #expect(infeasibleTrials.bestFeasible() == nil)
+        #expect(infeasibleTrials.bestFeasible(direction: .maximize) == nil)
+
+        // 3. Sequence with feasible trials that are not complete (e.g. pruned or failed)
+        let incompleteFeasibleTrials = [
+            PersistedTrial(
+                number: 0,
+                state: .pruned,
+                value: 2.0,
+                params: [:],
+                constraints: ["c1": -0.1]
+            ),
+            PersistedTrial(
+                number: 1,
+                state: .fail,
+                value: nil,
+                params: [:],
+                constraints: ["c1": -0.5]
+            ),
+            PersistedTrial(
+                number: 2,
+                state: .running,
+                value: 1.0,
+                params: [:],
+                constraints: ["c1": -0.2]
+            )
+        ]
+        #expect(incompleteFeasibleTrials.bestFeasible() == nil)
+
+        // 4. Sequence with mixed trials (infeasible, incomplete feasible, and complete feasible)
+        let tInfeasible = PersistedTrial(
+            number: 0,
+            state: .complete,
+            value: 1.0,
+            params: [:],
+            constraints: ["c1": 0.5]
+        )
+        let tPrunedFeasible = PersistedTrial(
+            number: 1,
+            state: .pruned,
+            value: 0.5,
+            params: [:],
+            constraints: ["c1": -0.1]
+        )
+        let tFeasibleComplete1 = PersistedTrial(
+            number: 2,
+            state: .complete,
+            value: 100.0,
+            params: [:],
+            constraints: ["c1": -0.2]
+        )
+        let tFeasibleComplete2 = PersistedTrial(
+            number: 3,
+            state: .complete,
+            value: 50.0,
+            params: [:],
+            constraints: ["c1": 0.0]
+        )
+        let tFeasibleComplete3 = PersistedTrial(
+            number: 4,
+            state: .complete,
+            value: 200.0,
+            params: [:],
+            constraints: ["c1": -1.0]
+        )
+
+        let mixedTrials = [tInfeasible, tPrunedFeasible, tFeasibleComplete1, tFeasibleComplete2, tFeasibleComplete3]
+
+        // Direction: minimize -> should select trial 3 (value 50.0)
+        let bestMin = mixedTrials.bestFeasible(direction: .minimize)
+        #expect(bestMin?.number == 3)
+        #expect(bestMin?.value == 50.0)
+
+        // Direction: maximize -> should select trial 4 (value 200.0)
+        let bestMax = mixedTrials.bestFeasible(direction: .maximize)
+        #expect(bestMax?.number == 4)
+        #expect(bestMax?.value == 200.0)
+    }
 }
