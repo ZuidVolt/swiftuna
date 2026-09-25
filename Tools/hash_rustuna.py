@@ -71,14 +71,14 @@ def main():
     if args.check_manifest:
         try:
             j = json.loads(
-                (ROOT / "Sources/LibRustuna/artifacts/manifest.json").read_text()
+                (ROOT / "LibRustuna.artifactbundle" / "manifest.json").read_text()
             )
             prev = j.get("inputs_hash", "")
         except (OSError, json.JSONDecodeError):
             prev = ""
         # also require artifact exists
         has_artifact = (
-            ROOT / "Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a"
+            ROOT / "LibRustuna.artifactbundle" / "linux-x86_64" / "librustuna_ffi.a"
         ).exists()
         if cur == prev and has_artifact:
             print(f"up to date: {cur}", file=sys.stderr if "sys" in dir() else None)

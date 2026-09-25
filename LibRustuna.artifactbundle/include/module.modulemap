@@ -1,0 +1,4 @@
+module LibRustuna {
+    header "rustuna.h"
+    export *
+}

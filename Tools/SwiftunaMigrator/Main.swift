@@ -245,7 +245,7 @@ struct SwiftunaMigratorApp {
             if breaking {
                 print("🔴 CRITICAL: Upstream changes may contain breaking trait or ABI alterations:")
                 for r in reasons { print("   - \(r)") }
-                print("👉 Action: Review crates/rustuna-ffi and Sources/LibRustuna before updating.")
+                print("👉 Action: Review crates/rustuna-ffi and LibRustuna.artifactbundle before updating.")
             } else if !reasons.isEmpty {
                 print("🟡 NOTICE: Upstream additions or updates detected:")
                 for r in reasons { print("   - \(r)") }

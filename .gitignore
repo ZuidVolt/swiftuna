@@ -13,9 +13,9 @@ xcuserdata/
 DerivedData/
 *.xcodeproj
 crates/rustuna-ffi/target/
-# keep vendored LibRustuna artifacts (checked-in per user request)
-!Sources/LibRustuna/artifacts/
-!Sources/LibRustuna/artifacts/**/*
+# LibRustuna.artifactbundle .a files are checked in (SE-0482 staticLibrary
+# bundle consumed directly by Package.swift); zip output is ephemeral.
+LibRustuna.artifactbundle.zip
 docs/
 __pycache__/
 .DS_Store

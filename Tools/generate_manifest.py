@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Sources/LibRustuna/artifacts/manifest.json from current inputs."""
+"""Generate LibRustuna.artifactbundle/manifest.json from current inputs."""
 
 import datetime
 import hashlib
@@ -73,8 +73,9 @@ manifest = {
     "artifacts": {},
 }
 for arch, path in [
-    ("linux-x86_64", "Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a"),
-    ("linux-aarch64", "Sources/LibRustuna/artifacts/linux-aarch64/librustuna_ffi.a"),
+    ("macos-arm64", "LibRustuna.artifactbundle/macos-arm64/librustuna_ffi.a"),
+    ("linux-x86_64", "LibRustuna.artifactbundle/linux-x86_64/librustuna_ffi.a"),
+    ("linux-aarch64", "LibRustuna.artifactbundle/linux-aarch64/librustuna_ffi.a"),
 ]:
     p = pathlib.Path(path)
     if p.exists():
@@ -83,7 +84,7 @@ for arch, path in [
             "sha256": file_hash(p),
             "size": p.stat().st_size,
         }
-pathlib.Path("Sources/LibRustuna/artifacts/manifest.json").write_text(
+pathlib.Path("LibRustuna.artifactbundle/manifest.json").write_text(
     json.dumps(manifest, indent=2)
 )
 print(json.dumps(manifest, indent=2))

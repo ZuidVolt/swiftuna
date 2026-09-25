@@ -2,23 +2,10 @@
 
 import PackageDescription
 
-// Vendored Rust staticlibs — checked in via Tools/package-binaries.py
-// Always release binary (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
-let packageDir = Context.packageDirectory
-let vendoredMacDir = "\(packageDir)/Sources/LibRustuna/artifacts/macos-arm64"
-#if arch(x86_64)
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
-#elseif arch(arm64)
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-aarch64"
-#else
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
-#endif
-
-let linkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(vendoredMacDir)", "-lrustuna_ffi"], .when(platforms: [.macOS])),
-    .unsafeFlags(["-L\(vendoredLinuxDir)", "-lrustuna_ffi"], .when(platforms: [.linux])),
-]
-
+// LibRustuna is a prebuilt Rust staticlib shipped as an SE-0482
+// `staticLibrary` artifact bundle (no unsafeFlags, SPM-Index compatible).
+// Variants: macos-arm64, linux-x86_64, linux-aarch64. Rebuild via
+// Tools/build-artifactbundle.py; sqlite is statically bundled inside the .a.
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .defaultIsolation(nil),
@@ -67,75 +54,64 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.4.3"),
     ],
     targets: [
-        .target(
+        .binaryTarget(
             name: "LibRustuna",
-            publicHeadersPath: "include",
-            swiftSettings: swiftSettings
+            path: "LibRustuna.artifactbundle"
         ),
         .target(
             name: "Swiftuna",
             dependencies: ["LibRustuna"],
             resources: [.process("Documentation.docc")],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "SwiftunaMigrator",
             dependencies: ["Swiftuna"],
             path: "Tools/SwiftunaMigrator",
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "SwiftunaParity",
             dependencies: ["Swiftuna"],
             path: "Tools/SwiftunaParity",
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "SwiftunaBench",
             dependencies: ["SwiftunaBenchKit"],
             path: "Tools/SwiftunaBench",
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .target(
             name: "SwiftunaBenchKit",
             dependencies: ["Swiftuna", "SwiftunaDistributed", "LibRustuna"],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "Experimentation",
             dependencies: ["Swiftuna"],
             path: "Tools/Experimentation",
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .testTarget(
             name: "SwiftunaBenchKitTests",
             dependencies: ["SwiftunaBenchKit"],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .testTarget(
             name: "SwiftunaTests",
             dependencies: ["Swiftuna", .product(name: "PropertyBased", package: "swift-property-based")],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .target(
             name: "SwiftunaDistributed",
             dependencies: ["Swiftuna"],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
         .testTarget(
             name: "SwiftunaDistributedTests",
             dependencies: ["SwiftunaDistributed", "Swiftuna"],
-            swiftSettings: swiftSettings,
-            linkerSettings: linkerSettings
+            swiftSettings: swiftSettings
         ),
     ]
 )

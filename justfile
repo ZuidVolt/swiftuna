@@ -5,9 +5,10 @@ build-ffi:
     cargo build --manifest-path crates/rustuna-ffi/Cargo.toml
 
 build-ffi-release:
-    RUSTFLAGS="-C target-cpu=apple-m1 -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
+    MACOSX_DEPLOYMENT_TARGET=26.0 RUSTFLAGS="-C target-cpu=apple-m1 -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
     strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
-    mv crates/rustuna-ffi/target/release/librustuna_ffi.a Sources/LibRustuna/artifacts/macos-arm64/librustuna_ffi.a
+    mv crates/rustuna-ffi/target/release/librustuna_ffi.a LibRustuna.artifactbundle/macos-arm64/librustuna_ffi.a
+    python3 Tools/build-artifactbundle.py --check
 
 build:
     swift build
@@ -39,6 +40,16 @@ package-binaries:
 
 package-binaries-check:
     python3 Tools/package-binaries.py --check
+
+# Assemble LibRustuna.artifactbundle (SE-0482 staticLibrary) from Sources artifacts
+artifactbundle:
+    python3 Tools/build-artifactbundle.py
+
+artifactbundle-check:
+    python3 Tools/build-artifactbundle.py --check
+
+artifactbundle-zip:
+    python3 Tools/build-artifactbundle.py --zip
 
 # Compare main against the current branch on shared suites (worktrees +
 # overlay + interleaving). Exits 0 pass, 1 regression, 2 inconclusive.

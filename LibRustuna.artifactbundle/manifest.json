@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "inputs_hash": "6ec48ed75de86d5e3f6f0b6d45f4ab1a19214a8fde735b301ce97706de590b56",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "generated_at": "2026-09-25T06:56:03.676736Z",
+  "artifacts": {
+    "macos-arm64": {
+      "file": "LibRustuna.artifactbundle/macos-arm64/librustuna_ffi.a",
+      "sha256": "15bd8c879322267831364fb0b99071286987d0644e2902dcc19f1c9e09180ea1",
+      "size": 6568840
+    },
+    "linux-x86_64": {
+      "file": "LibRustuna.artifactbundle/linux-x86_64/librustuna_ffi.a",
+      "sha256": "6feaf179337ce3268f2306fd9d69449ed20b36ebb121342e329e5b37dfe5f4cf",
+      "size": 20519520
+    },
+    "linux-aarch64": {
+      "file": "LibRustuna.artifactbundle/linux-aarch64/librustuna_ffi.a",
+      "sha256": "01495b9f184f6530fe93036945c4d425581a29b06fb580469bb623897ca8c0ed",
+      "size": 20628754
+    }
+  }
+}

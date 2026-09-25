@@ -5,7 +5,8 @@ Vendored binary packager for Swiftuna.
 - Builds macOS arm64 natively (apple-m1, bundled sqlite, strip -x)
 - Builds Linux x86_64 (+ try aarch64) via Apple `container` (swift:6.3-jammy + rustup stable, generic, bundled)
   Swift image has no cargo — installs rustup stable (1.98) fresh; rust image would need update.
-- Vendors into Sources/LibRustuna/artifacts/<platform>/
+- Vendors into LibRustuna.artifactbundle/<platform>/ (SE-0482 staticLibrary
+  bundle consumed directly by Package.swift — no unsafeFlags, no copied staging)
 - Uses Apple container CLI (`container`) via subprocess — no Docker, no YAML
 
 Usage:
@@ -31,7 +32,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CRATE = ROOT / "crates" / "rustuna-ffi"
-ARTIFACTS = ROOT / "Sources" / "LibRustuna" / "artifacts"
+ARTIFACTS = ROOT / "LibRustuna.artifactbundle"
 MACOS_DIR = ARTIFACTS / "macos-arm64"
 LINUX_X86_DIR = ARTIFACTS / "linux-x86_64"
 LINUX_ARM_DIR = ARTIFACTS / "linux-aarch64"
@@ -81,7 +82,13 @@ def build_macos() -> bool:
     print("\n● macOS arm64  (apple-m1, bundled sqlite)", flush=True)
     ok = run_checked(
         ["cargo", "build", "--release", "--manifest-path", str(CRATE / "Cargo.toml")],
-        env={**__import__("os").environ, "RUSTFLAGS": "-C target-cpu=apple-m1 -C embed-bitcode=no"},
+        env={
+            **__import__("os").environ,
+            "RUSTFLAGS": "-C target-cpu=apple-m1 -C embed-bitcode=no",
+            # Stamp objects for the package floor (.macOS(.v26)); otherwise a
+            # newer-Xcode SDK stamps a higher minos and every link warns.
+            "MACOSX_DEPLOYMENT_TARGET": "26.0",
+        },
     )
     if not ok:
         return False
@@ -297,6 +304,11 @@ def main():
             print("  ⚠ Linux aarch64 failed — continuing (x86_64 is the required one)", file=sys.stderr)
 
     check_artifacts()
+    # Re-sync bundle metadata (headers/info.json) over the fresh .a files
+    print("\n● sync artifact bundle metadata", flush=True)
+    if not run_checked([sys.executable, str(ROOT / "Tools" / "build-artifactbundle.py")]):
+        ok = False
+        print("  ✘ bundle sync failed", file=sys.stderr)
     dur = time.time() - start
     print(f"\nDone in {dur:.1f}s  {'✓' if ok else '✘ check logs'}")
     print("Next: swift build -c release  →  just bench")
