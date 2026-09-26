@@ -154,7 +154,7 @@ func buildOverlay(worktree wt: String, packageName: String, root: String) throws
     }
     // Executable entry: dispatch straight into the registry (no subcommands).
     try overlayMain().write(toFile: "\(srcDir)/OverlayMain.swift", atomically: true, encoding: .utf8)
-    try overlayPackage(packageName: packageName, worktree: wt).write(
+    try overlayPackage(packageName: packageName).write(
         toFile: "\(overlay)/Package.swift", atomically: true, encoding: .utf8)
 
     // Registry references the dropped suites; strip those lines.
@@ -223,12 +223,13 @@ private func overlayMain() -> String {
     """
 }
 
-private func overlayPackage(packageName: String, worktree: String) -> String {
+private func overlayPackage(packageName: String) -> String {
     // Mirror of the root Package.swift settings: the overlay must compile
     // the worktree's Swift sources with IDENTICAL codegen, or engine
     // comparisons measure compiler flags instead of code. Keep in sync.
-    let vendoredMac = "\(worktree)/Sources/LibRustuna/artifacts/macos-arm64"
-    let vendoredLinuxAarch64 = "\(worktree)/Sources/LibRustuna/artifacts/linux-aarch64"
+    // No linkerSettings: the Rust staticlib arrives transitively via the
+    // Swiftuna product's LibRustuna binaryTarget (SE-0482 artifact bundle),
+    // which is why this overlay stays SPM-Index-safe (no unsafeFlags).
     return """
     // swift-tools-version: 6.3
     import PackageDescription
@@ -254,10 +255,6 @@ private func overlayPackage(packageName: String, worktree: String) -> String {
                     .enableUpcomingFeature("InferIsolatedConformances"),
                     .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
                     .enableUpcomingFeature("ImmutableWeakCaptures"),
-                ],
-                linkerSettings: [
-                    .unsafeFlags(["-L\(vendoredMac)", "-lrustuna_ffi"], .when(platforms: [.macOS])),
-                    .unsafeFlags(["-L\(vendoredLinuxAarch64)", "-lrustuna_ffi"], .when(platforms: [.linux])),
                 ]
             ),
         ]

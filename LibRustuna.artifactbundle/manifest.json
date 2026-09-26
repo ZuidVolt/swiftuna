@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "inputs_hash": "fb6e02db7fbb6cc2b9733cc4fd6b7a2549330af853970a08feb52db9763e30c5",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "artifacts": {
+    "macos-arm64": {
+      "file": "LibRustuna.artifactbundle/macos-arm64/librustuna_ffi.a",
+      "sha256": "10c50fae304966966dd999c9c0aa45db3ac146566e0f34c5c66c03cc263c3c72",
+      "size": 4275016,
+      "sqlite": "system",
+      "sqlite_defined_symbols": 0
+    },
+    "linux-x86_64": {
+      "file": "LibRustuna.artifactbundle/linux-x86_64/librustuna_ffi.a",
+      "sha256": "6feaf179337ce3268f2306fd9d69449ed20b36ebb121342e329e5b37dfe5f4cf",
+      "size": 20519520,
+      "sqlite": "bundled",
+      "sqlite_defined_symbols": 281
+    },
+    "linux-aarch64": {
+      "file": "LibRustuna.artifactbundle/linux-aarch64/librustuna_ffi.a",
+      "sha256": "01495b9f184f6530fe93036945c4d425581a29b06fb580469bb623897ca8c0ed",
+      "size": 20628754,
+      "sqlite": "bundled",
+      "sqlite_defined_symbols": 281
+    }
+  }
+}

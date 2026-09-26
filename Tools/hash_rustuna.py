@@ -46,7 +46,10 @@ def compute_inputs_hash() -> str:
             h.update(hashlib.sha256(pp.read_bytes()).digest())
     h.update(os.environ.get("RUSTFLAGS", "").encode())
     try:
-        h.update(subprocess.check_output(["rustc", "--version", "--verbose"]))
+        # Short --version only: --verbose embeds the host triple, which
+        # would make the hash (and the manifest) disagree across macOS
+        # and Linux builders for identical inputs.
+        h.update(subprocess.check_output(["rustc", "--version"]))
     except (OSError, subprocess.SubprocessError):
         pass  # rustc not available — hash without it
     return h.hexdigest()
@@ -71,14 +74,14 @@ def main():
     if args.check_manifest:
         try:
             j = json.loads(
-                (ROOT / "Sources/LibRustuna/artifacts/manifest.json").read_text()
+                (ROOT / "LibRustuna.artifactbundle" / "manifest.json").read_text()
             )
             prev = j.get("inputs_hash", "")
         except (OSError, json.JSONDecodeError):
             prev = ""
         # also require artifact exists
         has_artifact = (
-            ROOT / "Sources/LibRustuna/artifacts/linux-x86_64/librustuna_ffi.a"
+            ROOT / "LibRustuna.artifactbundle" / "linux-x86_64" / "librustuna_ffi.a"
         ).exists()
         if cur == prev and has_artifact:
             print(f"up to date: {cur}", file=sys.stderr if "sys" in dir() else None)

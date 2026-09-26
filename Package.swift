@@ -2,21 +2,16 @@
 
 import PackageDescription
 
-// Vendored Rust staticlibs — checked in via Tools/package-binaries.py
-// Always release binary (apple-m1 / generic, bundled sqlite, strip -x / strip --strip-unneeded)
-let packageDir = Context.packageDirectory
-let vendoredMacDir = "\(packageDir)/Sources/LibRustuna/artifacts/macos-arm64"
-#if arch(x86_64)
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
-#elseif arch(arm64)
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-aarch64"
-#else
-    let vendoredLinuxDir = "\(packageDir)/Sources/LibRustuna/artifacts/linux-x86_64"
-#endif
-
+// LibRustuna is a prebuilt Rust staticlib shipped as an SE-0482
+// `staticLibrary` artifact bundle (no unsafeFlags, SPM-Index compatible).
+// Variants: macos-arm64, linux-x86_64, linux-aarch64. Rebuild via
+// Tools/build-artifactbundle.py.
+// SQLite provenance is per-variant and deliberate: the macOS slice has its
+// bundled amalgamation excised (Tools/strip-bundled-sqlite.py) and links the
+// OS library instead; Linux slices keep the bundled copy (hermetic —
+// consumers don't have -dev packages). .linkedLibrary is a SAFE setting.
 let linkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(vendoredMacDir)", "-lrustuna_ffi"], .when(platforms: [.macOS])),
-    .unsafeFlags(["-L\(vendoredLinuxDir)", "-lrustuna_ffi"], .when(platforms: [.linux])),
+    .linkedLibrary("sqlite3", .when(platforms: [.macOS])),
 ]
 
 let swiftSettings: [SwiftSetting] = [
@@ -67,10 +62,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.4.3"),
     ],
     targets: [
-        .target(
+        .binaryTarget(
             name: "LibRustuna",
-            publicHeadersPath: "include",
-            swiftSettings: swiftSettings
+            path: "LibRustuna.artifactbundle"
         ),
         .target(
             name: "Swiftuna",

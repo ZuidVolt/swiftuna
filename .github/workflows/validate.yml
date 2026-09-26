@@ -1,0 +1,109 @@
+name: validate
+
+on:
+  pull_request:
+    paths:
+      - "crates/rustuna-ffi/**"
+      - "Sources/LibRustuna/include/**"
+      - "LibRustuna.artifactbundle/**"
+      - "Tools/*.py"
+      - "Package.swift"
+      - "Sources/**"
+      - ".github/workflows/validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-gates:
+    # Runs on Linux so GNU-nm parsing is exercised too; no cargo needed
+    # (the .a files ship in the bundle, SPM links them directly).
+    # No setup-swift: ubuntu-latest runners already ship Swift 6.3+.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shallow clone ref/rustuna (hash inputs, not in git)
+        env:
+          # Canonical pin lives in update-linux-binaries.yml (owned by
+          # SwiftunaMigrator --accept); keep the value identical.
+          RUSTUNA_COMMIT: 9b36174af5b40a77db46e65b24e0fe5d0f03db4a
+        run: |
+          rm -rf ref/rustuna
+          git init ref/rustuna
+          git -C ref/rustuna remote add origin https://github.com/optuna/rustuna.git
+          git -C ref/rustuna fetch --depth 1 origin "$RUSTUNA_COMMIT"
+          git -C ref/rustuna checkout FETCH_HEAD
+          ls ref/rustuna/rustuna_storage/Cargo.toml
+
+      - name: pinned Rust toolchain (matches rust-toolchain.toml)
+        run: rustup show active-toolchain
+
+      - name: bundle in sync (headers, info.json, sqlite provenance)
+        run: python3 Tools/build-artifactbundle.py --check
+
+      - name: manifest fresh (inputs hash + per-artifact sha)
+        run: |
+          cp LibRustuna.artifactbundle/manifest.json /tmp/manifest.before.json
+          python3 Tools/generate_manifest.py > /dev/null
+          diff /tmp/manifest.before.json LibRustuna.artifactbundle/manifest.json
+
+      - name: hash gate (CI would skip rebuild)
+        run: python3 Tools/hash_rustuna.py --check-manifest
+
+      - name: no unsafeFlags (SPM-Index eligibility)
+        run: |
+          if grep -rn "\.unsafeFlags" Package.swift Sources/ Tools/ --include="*.swift"; then
+            echo "unsafeFlags found — package cannot be used as a dependency"
+            exit 1
+          fi
+          echo "no unsafeFlags in Swift targets"
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version (runner-provided, expect 6.3+)
+        run: swift --version
+
+      - name: Cache SwiftPM dependencies and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/.cache/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved') }}-
+            ${{ runner.os }}-swiftpm-
+
+      - name: build library (links linux slice, no cargo)
+        run: swift build --target Swiftuna
+
+  build-macos:
+    # macos-26 (arm64, Xcode 26.x with Swift 6.3+ for staticLibrary bundles).
+    # macos-15 runners only ship Swift 6.1, which cannot parse tools 6.3.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version (runner-provided, expect 6.3+)
+        run: swift --version
+
+      - name: Cache SwiftPM dependencies and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved') }}-
+            ${{ runner.os }}-swiftpm-
+
+      - name: build + test (system SQLite via .linkedLibrary)
+        run: |
+          swift build --target Swiftuna
+          swift test --quiet
