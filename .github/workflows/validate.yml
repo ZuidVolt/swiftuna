@@ -24,6 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: shallow clone ref/rustuna (hash inputs, not in git)
+        env:
+          # Canonical pin lives in update-linux-binaries.yml (owned by
+          # SwiftunaMigrator --accept); keep the value identical.
+          RUSTUNA_COMMIT: 9b36174af5b40a77db46e65b24e0fe5d0f03db4a
+        run: |
+          rm -rf ref/rustuna
+          git init ref/rustuna
+          git -C ref/rustuna remote add origin https://github.com/optuna/rustuna.git
+          git -C ref/rustuna fetch --depth 1 origin "$RUSTUNA_COMMIT"
+          git -C ref/rustuna checkout FETCH_HEAD
+          ls ref/rustuna/rustuna_storage/Cargo.toml
+
       - name: pinned Rust toolchain (matches rust-toolchain.toml)
         run: rustup show active-toolchain
 
