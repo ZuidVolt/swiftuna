@@ -98,10 +98,32 @@ def build() -> bool:
     for subdir, triple in VARIANTS:
         lib = BUNDLE / subdir / "librustuna_ffi.a"
         sz = lib.stat().st_size
-        print(f"  ✓ {subdir}/librustuna_ffi.a  {sz / 1_000_000:.1f} MB  ({triple})")
+        ndefs = sqlite_defined(lib)
+        mode = "system" if ndefs == 0 else f"bundled({ndefs})"
+        print(f"  ✓ {subdir}/librustuna_ffi.a  {sz / 1_000_000:.1f} MB  ({triple})  sqlite={mode}")
     (BUNDLE / "info.json").write_text(json.dumps(info_json(), indent=2) + "\n")
     print(f"  ✓ info.json  (staticLibrary, {len(VARIANTS)} variants)")
     return True
+
+
+def sqlite_defined(archive: pathlib.Path) -> int:
+    import subprocess as sp
+
+    out = sp.run(
+        ["nm", "-g", str(archive)],
+        stdout=sp.PIPE,
+        stderr=sp.DEVNULL,
+        text=True,
+    )
+    n = 0
+    for line in out.stdout.splitlines():
+        # nm -g lists undefined U refs too — count DEFINED only.
+        parts = line.split()
+        if len(parts) >= 3 and len(parts[-2]) == 1 and parts[-2].upper() != "U":
+            # Mach-O prefixes C symbols with `_`, ELF does not.
+            if parts[-1].lstrip("_").startswith("sqlite3_"):
+                n += 1
+    return n
 
 
 def check() -> bool:
@@ -122,6 +144,23 @@ def check() -> bool:
         a = BUNDLE / subdir / "librustuna_ffi.a"
         if not a.exists():
             print(f"  ✘ missing {a.relative_to(ROOT)} ({triple})", file=sys.stderr)
+            ok = False
+            continue
+        # SQLite provenance invariant: macOS links system SQLite (zero
+        # bundled defs — see Tools/strip-bundled-sqlite.py); Linux keeps
+        # the bundled amalgamation (hermetic, no -dev package for consumers).
+        ndefs = sqlite_defined(a)
+        if subdir.startswith("macos"):
+            if ndefs != 0:
+                print(
+                    f"  ✘ {subdir} ships {ndefs} bundled _sqlite3_ defs — "
+                    f"run Tools/strip-bundled-sqlite.py",
+                    file=sys.stderr,
+                )
+                ok = False
+        elif ndefs == 0:
+            print(f"  ✘ {subdir} has no bundled sqlite — Linux must stay hermetic",
+                  file=sys.stderr)
             ok = False
     for h in HEADERS:
         a, b = BUNDLE / "include" / h, SRC_INCLUDE / h

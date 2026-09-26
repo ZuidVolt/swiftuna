@@ -5,7 +5,14 @@ import PackageDescription
 // LibRustuna is a prebuilt Rust staticlib shipped as an SE-0482
 // `staticLibrary` artifact bundle (no unsafeFlags, SPM-Index compatible).
 // Variants: macos-arm64, linux-x86_64, linux-aarch64. Rebuild via
-// Tools/build-artifactbundle.py; sqlite is statically bundled inside the .a.
+// Tools/build-artifactbundle.py.
+// SQLite provenance is per-variant and deliberate: the macOS slice has its
+// bundled amalgamation excised (Tools/strip-bundled-sqlite.py) and links the
+// OS library instead; Linux slices keep the bundled copy (hermetic —
+// consumers don't have -dev packages). .linkedLibrary is a SAFE setting.
+let linkerSettings: [LinkerSetting] = [
+    .linkedLibrary("sqlite3", .when(platforms: [.macOS])),
+]
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .defaultIsolation(nil),
@@ -62,56 +69,66 @@ let package = Package(
             name: "Swiftuna",
             dependencies: ["LibRustuna"],
             resources: [.process("Documentation.docc")],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "SwiftunaMigrator",
             dependencies: ["Swiftuna"],
             path: "Tools/SwiftunaMigrator",
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "SwiftunaParity",
             dependencies: ["Swiftuna"],
             path: "Tools/SwiftunaParity",
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "SwiftunaBench",
             dependencies: ["SwiftunaBenchKit"],
             path: "Tools/SwiftunaBench",
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .target(
             name: "SwiftunaBenchKit",
             dependencies: ["Swiftuna", "SwiftunaDistributed", "LibRustuna"],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .executableTarget(
             name: "Experimentation",
             dependencies: ["Swiftuna"],
             path: "Tools/Experimentation",
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .testTarget(
             name: "SwiftunaBenchKitTests",
             dependencies: ["SwiftunaBenchKit"],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .testTarget(
             name: "SwiftunaTests",
             dependencies: ["Swiftuna", .product(name: "PropertyBased", package: "swift-property-based")],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .target(
             name: "SwiftunaDistributed",
             dependencies: ["Swiftuna"],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
         .testTarget(
             name: "SwiftunaDistributedTests",
             dependencies: ["SwiftunaDistributed", "Swiftuna"],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: linkerSettings
         ),
     ]
 )

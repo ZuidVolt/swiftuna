@@ -61,6 +61,27 @@ def file_hash(p):
         return None
 
 
+def sqlite_defs(p: pathlib.Path) -> int:
+    """Count defined _sqlite3_* symbols: 0 means the slice links system
+    SQLite (macOS policy); >0 means bundled (Linux policy). Derived, not
+    hardcoded, so the manifest reports what is actually shipped."""
+    try:
+        out = subprocess.check_output(
+            ["nm", "-g", str(p)], text=True, stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.SubprocessError):
+        return -1
+    n = 0
+    for line in out.splitlines():
+        # nm -g lists undefined U refs too — count DEFINED only.
+        parts = line.split()
+        if len(parts) >= 3 and len(parts[-2]) == 1 and parts[-2].upper() != "U":
+            # Mach-O prefixes C symbols with `_`, ELF does not.
+            if parts[-1].lstrip("_").startswith("sqlite3_"):
+                n += 1
+    return n
+
+
 manifest = {
     "version": 1,
     "inputs_hash": inputs_hash,
@@ -79,10 +100,15 @@ for arch, path in [
 ]:
     p = pathlib.Path(path)
     if p.exists():
+        ndefs = sqlite_defs(p)
         manifest["artifacts"][arch] = {
             "file": str(p),
             "sha256": file_hash(p),
             "size": p.stat().st_size,
+            # Provenance is measured: "system" (macOS links libsqlite3,
+            # zero bundled defs) vs "bundled" (Linux hermetic).
+            "sqlite": "system" if ndefs == 0 else "bundled",
+            "sqlite_defined_symbols": ndefs,
         }
 pathlib.Path("LibRustuna.artifactbundle/manifest.json").write_text(
     json.dumps(manifest, indent=2)

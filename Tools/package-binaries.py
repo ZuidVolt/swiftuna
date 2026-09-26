@@ -100,6 +100,14 @@ def build_macos() -> bool:
         run(["strip", "-x", str(src)])
     except Exception as e:
         print(f"  ⚠ strip -x failed: {e}", file=sys.stderr)
+    # macOS links system SQLite (Package.swift .linkedLibrary) — excise the
+    # bundled amalgamation so no _sqlite3_* definitions ship in this slice.
+    # Linux slices keep it (hermetic; consumers lack -dev packages).
+    try:
+        run([sys.executable, str(ROOT / "Tools" / "strip-bundled-sqlite.py"), str(src)])
+    except Exception as e:
+        print(f"  ✘ sqlite excision failed: {e}", file=sys.stderr)
+        return False
     MACOS_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, MACOS_DIR / "librustuna_ffi.a")
     sz = (MACOS_DIR / "librustuna_ffi.a").stat().st_size

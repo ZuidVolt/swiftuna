@@ -7,6 +7,7 @@ build-ffi:
 build-ffi-release:
     MACOSX_DEPLOYMENT_TARGET=26.0 RUSTFLAGS="-C target-cpu=apple-m1 -C embed-bitcode=no" cargo build --release --manifest-path crates/rustuna-ffi/Cargo.toml
     strip -x crates/rustuna-ffi/target/release/librustuna_ffi.a
+    python3 Tools/strip-bundled-sqlite.py crates/rustuna-ffi/target/release/librustuna_ffi.a
     mv crates/rustuna-ffi/target/release/librustuna_ffi.a LibRustuna.artifactbundle/macos-arm64/librustuna_ffi.a
     python3 Tools/build-artifactbundle.py --check
 
