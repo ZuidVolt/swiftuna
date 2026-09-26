@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "inputs_hash": "6ec48ed75de86d5e3f6f0b6d45f4ab1a19214a8fde735b301ce97706de590b56",
+  "inputs_hash": "fb6e02db7fbb6cc2b9733cc4fd6b7a2549330af853970a08feb52db9763e30c5",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
   "artifacts": {
     "macos-arm64": {

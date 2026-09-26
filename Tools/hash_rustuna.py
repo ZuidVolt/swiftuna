@@ -46,7 +46,10 @@ def compute_inputs_hash() -> str:
             h.update(hashlib.sha256(pp.read_bytes()).digest())
     h.update(os.environ.get("RUSTFLAGS", "").encode())
     try:
-        h.update(subprocess.check_output(["rustc", "--version", "--verbose"]))
+        # Short --version only: --verbose embeds the host triple, which
+        # would make the hash (and the manifest) disagree across macOS
+        # and Linux builders for identical inputs.
+        h.update(subprocess.check_output(["rustc", "--version"]))
     except (OSError, subprocess.SubprocessError):
         pass  # rustc not available — hash without it
     return h.hexdigest()
