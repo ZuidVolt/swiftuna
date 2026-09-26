@@ -42,7 +42,8 @@ package-binaries:
 package-binaries-check:
     python3 Tools/package-binaries.py --check
 
-# Assemble LibRustuna.artifactbundle (SE-0482 staticLibrary) from Sources artifacts
+# Sync headers/metadata into LibRustuna.artifactbundle (the .a files
+# themselves are written there directly by the build recipes above)
 artifactbundle:
     python3 Tools/build-artifactbundle.py
 

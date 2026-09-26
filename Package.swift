@@ -13,6 +13,7 @@ import PackageDescription
 let linkerSettings: [LinkerSetting] = [
     .linkedLibrary("sqlite3", .when(platforms: [.macOS])),
 ]
+
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .defaultIsolation(nil),

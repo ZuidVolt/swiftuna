@@ -30,6 +30,9 @@ import subprocess
 import sys
 import pathlib
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from ffi_util import sqlite_defined_names
+
 
 def members(archive: pathlib.Path) -> list[str]:
     out = subprocess.run(
@@ -38,33 +41,8 @@ def members(archive: pathlib.Path) -> list[str]:
     return out.splitlines()
 
 
-def is_sqlite_sym(tok: str) -> bool:
-    # Mach-O prefixes C symbols with `_`, ELF does not — accept both.
-    return tok.lstrip("_").startswith("sqlite3_")
-
-
-def defined_symbols(archive: pathlib.Path) -> set[str]:
-    """Globally-DEFINED symbols only (`nm -g` also lists undefined `U`
-    refs, which must not count — the Rust objects legitimately keep 53
-    undefined sqlite refs that the final link resolves to system SQLite)."""
-    out = subprocess.run(
-        ["nm", "-g", str(archive)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=True,
-    ).stdout
-    found = set()
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and len(parts[-2]) == 1 and parts[-2].upper() != "U":
-            if is_sqlite_sym(parts[-1]):
-                found.add(parts[-1])
-    return found
-
-
 def sqlite_defs(archive: pathlib.Path) -> set[str]:
-    return defined_symbols(archive)
+    return sqlite_defined_names(archive)
 
 
 def main() -> int:
@@ -76,7 +54,9 @@ def main() -> int:
         m for m in members(archive) if m.endswith("-sqlite3.o") and "rcgu" not in m
     ]
     if not c_objs:
-        print(f"  ✘ no bundled sqlite amalgamation object in {archive}", file=sys.stderr)
+        print(
+            f"  ✘ no bundled sqlite amalgamation object in {archive}", file=sys.stderr
+        )
         return 1
     for m in c_objs:
         subprocess.run(["ar", "d", str(archive), m], check=True)

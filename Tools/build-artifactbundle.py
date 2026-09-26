@@ -20,9 +20,10 @@ Layout (Intel macOS intentionally omitted — deprecated, Swift 6.5 drops it):
     linux-aarch64/librustuna_ffi.a        (aarch64-unknown-linux-gnu)
 
 The .a files are fully static LLVM objects (Mach-O/ELF, no bitcode by
-design — see crates/rustuna-ffi/Cargo.toml note on LTO); sqlite is
-statically bundled inside (nm shows T _sqlite3_open / T sqlite3_open),
-so the SE-0482 audit (libc-only external deps) passes.
+design — see crates/rustuna-ffi/Cargo.toml note on LTO). SQLite provenance
+is per-variant: macOS links the OS library (zero bundled defs), Linux keeps
+the bundled amalgamation (hermetic), so the SE-0482 audit (libc-only
+external deps) passes everywhere.
 """
 
 from __future__ import annotations
@@ -34,6 +35,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from ffi_util import sqlite_defined_symbols
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC_INCLUDE = ROOT / "Sources" / "LibRustuna" / "include"
@@ -107,23 +111,7 @@ def build() -> bool:
 
 
 def sqlite_defined(archive: pathlib.Path) -> int:
-    import subprocess as sp
-
-    out = sp.run(
-        ["nm", "-g", str(archive)],
-        stdout=sp.PIPE,
-        stderr=sp.DEVNULL,
-        text=True,
-    )
-    n = 0
-    for line in out.stdout.splitlines():
-        # nm -g lists undefined U refs too — count DEFINED only.
-        parts = line.split()
-        if len(parts) >= 3 and len(parts[-2]) == 1 and parts[-2].upper() != "U":
-            # Mach-O prefixes C symbols with `_`, ELF does not.
-            if parts[-1].lstrip("_").startswith("sqlite3_"):
-                n += 1
-    return n
+    return sqlite_defined_symbols(archive)
 
 
 def check() -> bool:

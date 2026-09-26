@@ -1,0 +1,72 @@
+name: validate
+
+on:
+  pull_request:
+    paths:
+      - "crates/rustuna-ffi/**"
+      - "Sources/LibRustuna/include/**"
+      - "LibRustuna.artifactbundle/**"
+      - "Tools/*.py"
+      - "Package.swift"
+      - "Sources/**"
+      - ".github/workflows/validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-gates:
+    # Runs on Linux so GNU-nm parsing is exercised too; no cargo needed
+    # (the .a files ship in the bundle, SPM links them directly).
+    # No setup-swift: ubuntu-latest runners already ship Swift 6.3+.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: pinned Rust toolchain (matches rust-toolchain.toml)
+        run: rustup show active-toolchain
+
+      - name: bundle in sync (headers, info.json, sqlite provenance)
+        run: python3 Tools/build-artifactbundle.py --check
+
+      - name: manifest fresh (inputs hash + per-artifact sha)
+        run: |
+          cp LibRustuna.artifactbundle/manifest.json /tmp/manifest.before.json
+          python3 Tools/generate_manifest.py > /dev/null
+          diff /tmp/manifest.before.json LibRustuna.artifactbundle/manifest.json
+
+      - name: hash gate (CI would skip rebuild)
+        run: python3 Tools/hash_rustuna.py --check-manifest
+
+      - name: no unsafeFlags (SPM-Index eligibility)
+        run: |
+          if grep -rn "\.unsafeFlags" Package.swift Sources/ Tools/ --include="*.swift"; then
+            echo "unsafeFlags found — package cannot be used as a dependency"
+            exit 1
+          fi
+          echo "no unsafeFlags in Swift targets"
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version (runner-provided, expect 6.3+)
+        run: swift --version
+
+      - name: build library (links linux slice, no cargo)
+        run: swift build --target Swiftuna
+
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version (runner-provided, expect 6.2+ for staticLibrary bundles)
+        run: swift --version
+
+      - name: build + test (system SQLite via .linkedLibrary)
+        run: |
+          swift build --target Swiftuna
+          swift test --quiet

@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned so every dev machine and CI build byte-identical Rust artifacts.
+# The inputs_hash in LibRustuna.artifactbundle/manifest.json folds in the
+# rustc version, so a floating toolchain would spuriously invalidate it.
+channel = "1.98.1"
